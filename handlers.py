@@ -32,11 +32,18 @@ def get_effect_keyboard(session: dict):
     style_name = core.VISUALIZER_STYLES.get(current_style, {}).get("name", "〰️ Smooth Wave")
     b_style = types.InlineKeyboardButton(f"🎨 Visualizer: {style_name}", callback_data="menu_styles")
     
+    has_custom = bool(session.get("custom_photo_path"))
+    b_custom_photo = types.InlineKeyboardButton(
+        "🖼️ Custom Wallpaper: ✅ Active" if has_custom else "🖼️ Set Custom Wallpaper (Photo)",
+        callback_data="prompt_custom_photo"
+    )
+    
     kb.add(b_8d, b_8d_bass)
     kb.add(b_vid, b_16d)
     kb.add(b_slow, b_fast)
     kb.add(b_bass)
     kb.add(b_style)
+    kb.add(b_custom_photo)
     return kb
 
 def get_style_selection_keyboard():
@@ -115,6 +122,52 @@ def register_handlers(bot: TeleBot):
         )
         bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
+    def process_and_save_photo(user_id, chat_id, file_id, reply_to_msg_id=None):
+        session = db.get_session(user_id)
+        if not session or not session.get("raw_audio_path"):
+            bot.send_message(
+                chat_id,
+                "ℹ️ *Pehle Song / Audio file bhejo!*\nUske baad aap video background ke liye apni custom photo bhej sakte ho.",
+                reply_to_message_id=reply_to_msg_id,
+                parse_mode="Markdown"
+            )
+            return
+
+        status_msg = bot.send_message(chat_id, "🖼️ *Downloading and applying your custom wallpaper...*",
+                                      reply_to_message_id=reply_to_msg_id, parse_mode="Markdown")
+        try:
+            file_info = bot.get_file(file_id)
+            downloaded = bot.download_file(file_info.file_path)
+            
+            user_temp_dir = config.TEMP_DIR / str(user_id)
+            user_temp_dir.mkdir(exist_ok=True, parents=True)
+            custom_photo_path = str(user_temp_dir / "custom_background.jpg")
+            with open(custom_photo_path, 'wb') as f:
+                f.write(downloaded)
+
+            db.save_session(user_id, custom_photo_path=custom_photo_path)
+            session["custom_photo_path"] = custom_photo_path
+            
+            kb = types.InlineKeyboardMarkup(row_width=1)
+            kb.add(types.InlineKeyboardButton("🎬 Render 8D Video with this Photo", callback_data="make_video"))
+            kb.add(types.InlineKeyboardButton("🎨 Change Visualizer Style", callback_data="menu_styles"))
+            kb.add(types.InlineKeyboardButton("⬅️ Back to Audio Menu", callback_data="back_main"))
+            
+            song_title = session.get('last_song_name', 'your song')
+            bot.edit_message_text(
+                f"✅ *Custom Photo Saved Successfully!*\n\n"
+                f"🎵 Track: `{song_title}`\n"
+                f"🖼️ Wallpaper: *Active for Video Background*\n\n"
+                f"Click below to generate your 1080p 8D Visualizer Video:",
+                chat_id=status_msg.chat.id,
+                message_id=status_msg.message_id,
+                parse_mode="Markdown",
+                reply_markup=kb
+            )
+        except Exception as e:
+            logger.error(f"Photo save error: {e}")
+            bot.edit_message_text(f"❌ Failed to save photo: {e}", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+
     @bot.message_handler(content_types=['audio', 'document'])
     def handle_audio_upload(message):
         user_id = message.from_user.id
@@ -128,7 +181,16 @@ def register_handlers(bot: TeleBot):
         if not file_obj:
             return
 
-        file_name = getattr(file_obj, 'file_name', None) or f"audio_{int(time.time())}.mp3"
+        file_name = (getattr(file_obj, 'file_name', None) or "").lower()
+        mime_type = (getattr(file_obj, 'mime_type', None) or "").lower()
+
+        # If user sent an image as a document/file, route it to photo wallpaper handler!
+        if mime_type.startswith("image/") or any(file_name.endswith(ext) for ext in ('.jpg', '.jpeg', '.png', '.webp', '.bmp')):
+            process_and_save_photo(user_id, message.chat.id, file_obj.file_id, message.message_id)
+            return
+
+        if not file_name:
+            file_name = f"audio_{int(time.time())}.mp3"
         file_size_mb = file_obj.file_size / (1024 * 1024)
         
         if file_size_mb > config.MAX_AUDIO_SIZE_MB:
@@ -169,6 +231,7 @@ def register_handlers(bot: TeleBot):
                     f"👤 *Artist:* `{meta['artist']}`\n"
                     f"⏱️ *Duration:* `{dur_str}`\n"
                     f"🖼️ *Cover Art:* {'✅ Embedded Cover Found' if meta['has_cover'] else 'ℹ️ Default Background'}\n\n"
+                    f"💡 *Custom Photo:* Video me apni photo lagane ke liye chat me direct photo send karein!\n\n"
                     f"👇 *Choose an Audio Effect or Generate Video:*"
                 )
                 
@@ -187,39 +250,8 @@ def register_handlers(bot: TeleBot):
     @bot.message_handler(content_types=['photo'])
     def handle_photo_upload(message):
         user_id = message.from_user.id
-        session = db.get_session(user_id)
-        if not session or not session.get("raw_audio_path"):
-            bot.reply_to(message, "ℹ️ Please send a **Song/Audio file first**, then send your custom wallpaper photo for the video background!")
-            return
-
-        status_msg = bot.reply_to(message, "🖼️ *Downloading your custom wallpaper...*", parse_mode="Markdown")
-        try:
-            photo = message.photo[-1]
-            file_info = bot.get_file(photo.file_id)
-            downloaded = bot.download_file(file_info.file_path)
-            
-            user_temp_dir = config.TEMP_DIR / str(user_id)
-            user_temp_dir.mkdir(exist_ok=True, parents=True)
-            custom_photo_path = str(user_temp_dir / "custom_background.jpg")
-            with open(custom_photo_path, 'wb') as f:
-                f.write(downloaded)
-
-            db.save_session(user_id, custom_photo_path=custom_photo_path)
-            
-            kb = types.InlineKeyboardMarkup()
-            kb.add(types.InlineKeyboardButton("🎬 Render 8D Video with this Photo", callback_data="make_video"))
-            kb.add(types.InlineKeyboardButton("🎨 Change Visualizer Style", callback_data="menu_styles"))
-            
-            bot.edit_message_text(
-                "✅ *Custom Photo Saved!*\n\nThis image will now be used as the background for your video. Click below to render:",
-                chat_id=status_msg.chat.id,
-                message_id=status_msg.message_id,
-                parse_mode="Markdown",
-                reply_markup=kb
-            )
-        except Exception as e:
-            logger.error(f"Photo save error: {e}")
-            bot.edit_message_text(f"❌ Failed to save photo: {e}", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+        photo = message.photo[-1]
+        process_and_save_photo(user_id, message.chat.id, photo.file_id, message.message_id)
 
     @bot.callback_query_handler(func=lambda call: True)
     def handle_callbacks(call):
@@ -270,6 +302,22 @@ def register_handlers(bot: TeleBot):
                 message_id=call.message.message_id,
                 parse_mode="Markdown",
                 reply_markup=get_effect_keyboard(session)
+            )
+            return
+
+        if data == "prompt_custom_photo":
+            bot.answer_callback_query(call.id)
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("⬅️ Back to Audio Menu", callback_data="back_main"))
+            bot.send_message(
+                call.message.chat.id,
+                "🖼️ *How to Set Custom Wallpaper for Video:*\n\n"
+                "1️⃣ Bas chat me direct koi bhi **Photo** send kar do (ya document/file ke roop me photo bhejo).\n"
+                "2️⃣ Bot us photo ko download karke 1080p video background me automatically set kar dega.\n"
+                "3️⃣ Uske baad aap **🎬 Render 8D Video** click karte hi video usi photo background ke saath generate ho jayegi!\n\n"
+                "📸 *Abhi chat me koi bhi photo send karein!*",
+                parse_mode="Markdown",
+                reply_markup=kb
             )
             return
 
