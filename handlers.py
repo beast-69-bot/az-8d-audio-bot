@@ -12,6 +12,7 @@ from telebot import TeleBot, types
 import config
 import database as db
 import core
+import uploader
 
 logger = logging.getLogger("az_8d_bot.handlers")
 
@@ -336,17 +337,19 @@ def register_handlers(bot: TeleBot):
                     kb_after = types.InlineKeyboardMarkup()
                     kb_after.add(types.InlineKeyboardButton("🎬 Make Video of this Song", callback_data="make_video"))
 
-                    with open(out_mp3, 'rb') as audio_file:
-                        bot.send_audio(
-                            call.message.chat.id,
-                            audio_file,
-                            title=f"{song_clean} ({effect_name.upper()})",
-                            performer="AZ 8D Studio",
-                            caption=f"✨ *{effect_name.upper()} Audio Ready!* 🎧\n• Mastered at: 320 kbps (-14 LUFS)\n• Use headphones for 360° spatial effect!",
-                            parse_mode="Markdown",
-                            reply_markup=kb_after
-                        )
-                    bot.delete_message(status_msg.chat.id, status_msg.message_id)
+                    uploader.send_audio_smart(
+                        bot=bot,
+                        chat_id=call.message.chat.id,
+                        file_path=out_mp3,
+                        title=f"{song_clean} ({effect_name.upper()})",
+                        performer="AZ 8D Studio",
+                        caption=f"✨ *{effect_name.upper()} Audio Ready!* 🎧\n• Mastered at: 320 kbps (-14 LUFS)\n• Use headphones for 360° spatial effect!",
+                        reply_markup=kb_after
+                    )
+                    try:
+                        bot.delete_message(status_msg.chat.id, status_msg.message_id)
+                    except Exception:
+                        pass
                 except Exception as e:
                     logger.error(f"Audio process error: {e}", exc_info=True)
                     bot.send_message(call.message.chat.id, f"❌ Failed to process audio: {e}")
@@ -440,15 +443,30 @@ def register_handlers(bot: TeleBot):
                     except:
                         pass
 
-                    with open(out_video, 'rb') as vid_file:
-                        bot.send_video(
-                            call.message.chat.id,
-                            vid_file,
-                            caption=f"🎬 *{song_clean} (8D Audio + Visualizer)*\n\n• Visualizer: `{style_info['name']}`\n• Resolution: 1080p Full HD\n• 🎧 *Wear Headphones for 360° Movement!*",
-                            parse_mode="Markdown",
-                            supports_streaming=True
-                        )
-                    bot.delete_message(status_msg.chat.id, status_msg.message_id)
+                    def update_upload_progress(pct, detail):
+                        try:
+                            card = render_progress_card(
+                                f"Uploading 8D Video ({detail})",
+                                pct,
+                                stage="Finalizing",
+                                detail="Uploading via MTProto Engine..."
+                            )
+                            bot.edit_message_text(card, chat_id=status_msg.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
+                        except Exception:
+                            pass
+
+                    uploader.send_video_smart(
+                        bot=bot,
+                        chat_id=call.message.chat.id,
+                        file_path=out_video,
+                        caption=f"🎬 *{song_clean} (8D Audio + Visualizer)*\n\n• Visualizer: `{style_info['name']}`\n• Resolution: 1080p Full HD\n• 🎧 *Wear Headphones for 360° Movement!*",
+                        supports_streaming=True,
+                        progress_callback=update_upload_progress
+                    )
+                    try:
+                        bot.delete_message(status_msg.chat.id, status_msg.message_id)
+                    except Exception:
+                        pass
                 except Exception as e:
                     logger.error(f"Video process error: {e}", exc_info=True)
                     bot.send_message(call.message.chat.id, f"❌ Video rendering failed: {e}")
