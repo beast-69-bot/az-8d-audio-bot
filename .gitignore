@@ -1,0 +1,22 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+env/
+venv/
+
+# Temporary directories and media
+temp/
+output/
+logs/*.log
+*.db
+*.sqlite3
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,224 @@
+"""
+Core Audio & Video Engine for AZ 8D Audio Bot.
+"""
+
+import os
+import sys
+import time
+import subprocess
+import numpy as np
+import scipy.io.wavfile as wav
+import scipy.signal as signal
+from pathlib import Path
+from typing import Dict, Any, Tuple, Optional
+from config import (
+    AUDIO_SAMPLE_RATE, MP3_BITRATE, TARGET_LUFS, TARGET_TP, TEMP_DIR, ASSETS_DIR
+)
+from processor import PRESETS, process_8d_dsp, simple_schroeder_reverb
+
+VISUALIZER_STYLES = {
+    "style1_smooth_wave": {
+        "name": "〰️ Smooth Center Wave",
+        "desc": "Minimalist white glowing liquid wave",
+        "filter": "[1:a]showwaves=s=1200x160:mode=cline:colors=white@0.9:scale=cbrt,format=yuva420p[vis]; [stage1][vis]overlay=(W-w)/2:H-h-70[v]"
+    },
+    "style2_spectrum_bars": {
+        "name": "📊 Spectrum Equalizer Bars",
+        "desc": "Dynamic logarithmic DJ frequency bars",
+        "filter": "[1:a]showfreqs=s=1200x200:mode=bar:fscale=log:ascale=cbrt:colors=white@0.85,format=yuva420p[vis]; [stage1][vis]overlay=(W-w)/2:H-h-60[v]"
+    },
+    "style3_mirrored_dual": {
+        "name": "🪞 Mirrored Dual Frequency",
+        "desc": "Symmetric top-bottom blue frequency wave",
+        "filter": "[1:a]showwaves=s=1200x200:mode=p2p:colors=0x38bdf8@0.9:scale=sqrt,format=yuva420p[vis]; [stage1][vis]overlay=(W-w)/2:H-h-70[v]"
+    },
+    "style4_neon_gradient": {
+        "name": "🌈 Neon Cyber Glow",
+        "desc": "Cyan to Rose Pink color-shifting wave",
+        "filter": "[1:a]showwaves=s=1200x180:mode=cline:colors=0x00f5ff|0xf43f5e:scale=cbrt,format=yuva420p[vis]; [stage1][vis]overlay=(W-w)/2:H-h-70[v]"
+    },
+    "style5_stereo_scope": {
+        "name": "🌀 3D Stereo Orbit Scope",
+        "desc": "Real-time circular scope that tracks 8D rotation",
+        "filter": "[1:a]avectorscope=s=350x350:m=lissajous:draw=line:scale=sqrt:rc=0:gc=240:bc=255:rf=0:gf=180:bf=240,format=yuva420p[vis]; [stage1][vis]overlay=(W-w)/2:H-h-40[v]"
+    }
+}
+
+def extract_metadata_and_cover(input_audio: str, out_cover_path: str) -> Dict[str, Any]:
+    cmd = [
+        "ffprobe", "-v", "quiet",
+        "-print_format", "json",
+        "-show_format", "-show_streams",
+        input_audio
+    ]
+    meta = {"title": "Unknown Title", "artist": "Unknown Artist", "duration": 0.0, "has_cover": False}
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        import json
+        data = json.loads(res.stdout)
+        fmt = data.get("format", {})
+        tags = fmt.get("tags", {})
+        meta["title"] = tags.get("title", tags.get("TITLE", Path(input_audio).stem))
+        meta["artist"] = tags.get("artist", tags.get("ARTIST", "Unknown Artist"))
+        meta["duration"] = float(fmt.get("duration", 0.0))
+        for st in data.get("streams", []):
+            if st.get("codec_type") == "video":
+                meta["has_cover"] = True
+                break
+    except Exception as e:
+        meta["title"] = Path(input_audio).stem
+
+    if meta["has_cover"]:
+        cmd_extract = [
+            "ffmpeg", "-y",
+            "-i", input_audio,
+            "-an", "-vcodec", "copy",
+            out_cover_path
+        ]
+        try:
+            subprocess.run(cmd_extract, capture_output=True, check=True)
+        except:
+            meta["has_cover"] = False
+
+    return meta
+
+def process_16d_dsp(input_wav: str, output_wav: str):
+    sr, data = wav.read(input_wav)
+    if data.dtype == np.int16:
+        data = data.astype(np.float32) / 32768.0
+    else:
+        data = data.astype(np.float32)
+        
+    mono = (data[:, 0] + data[:, 1]) * 0.5
+    n = len(mono)
+    t = np.linspace(0, n / sr, n, endpoint=False)
+    
+    # 1. Sub-bass anchor (<110Hz)
+    sos_lp = signal.butter(2, 110.0, 'low', fs=sr, output='sos')
+    sub = signal.sosfilt(sos_lp, signal.sosfilt(sos_lp, mono))
+    
+    # 2. Mid band (110Hz - 2500Hz)
+    sos_bp = signal.butter(2, [110.0, 2500.0], 'bandpass', fs=sr, output='sos')
+    mid = signal.sosfilt(sos_bp, mono)
+    
+    # 3. High band (>2500Hz)
+    sos_hp = signal.butter(2, 2500.0, 'high', fs=sr, output='sos')
+    high = signal.sosfilt(sos_hp, mono)
+    
+    # Orbit 1: Clockwise 12s
+    omega_mid = 2.0 * np.pi / 12.0
+    pan_mid = np.sin(omega_mid * t)
+    gain_mid_l = np.cos((pan_mid + 1.0) * (np.pi / 4.0)) * 0.85 + 0.15 * 0.707
+    gain_mid_r = np.sin((pan_mid + 1.0) * (np.pi / 4.0)) * 0.85 + 0.15 * 0.707
+    
+    # Orbit 2: Counter-clockwise 8s
+    omega_high = -2.0 * np.pi / 8.0
+    pan_high = np.sin(omega_high * t)
+    gain_high_l = np.cos((pan_high + 1.0) * (np.pi / 4.0)) * 0.90 + 0.10 * 0.707
+    gain_high_r = np.sin((pan_high + 1.0) * (np.pi / 4.0)) * 0.90 + 0.10 * 0.707
+    
+    rev_l, rev_r = simple_schroeder_reverb(mid + high, sr, wet=0.14, decay=1.4)
+    out_l = sub + (mid * gain_mid_l) + (high * gain_high_l) + rev_l
+    out_r = sub + (mid * gain_mid_r) + (high * gain_high_r) + rev_r
+    
+    peak = max(np.max(np.abs(out_l)), np.max(np.abs(out_r)))
+    if peak > 0.95:
+        out_l = np.tanh(out_l / peak) * 0.95
+        out_r = np.tanh(out_r / peak) * 0.95
+        
+    stereo = np.vstack([out_l, out_r]).T
+    wav.write(output_wav, sr, (stereo * 32767).astype(np.int16))
+
+def process_audio_effect(input_audio: str, output_mp3: str, effect: str = "8d") -> str:
+    temp_wav_in = str(TEMP_DIR / f"temp_in_{int(time.time()*1000)}.wav")
+    temp_wav_proc = str(TEMP_DIR / f"temp_proc_{int(time.time()*1000)}.wav")
+    
+    cmd_dec = ["ffmpeg", "-y", "-i", input_audio, "-vn", "-ar", str(AUDIO_SAMPLE_RATE), "-ac", "2", temp_wav_in]
+    subprocess.run(cmd_dec, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    
+    if effect == "8d":
+        process_8d_dsp(temp_wav_in, temp_wav_proc, PRESETS["standard"])
+    elif effect == "16d":
+        process_16d_dsp(temp_wav_in, temp_wav_proc)
+    elif effect == "slowed":
+        cmd_eff = [
+            "ffmpeg", "-y", "-i", temp_wav_in,
+            "-filter_complex", "asetrate=48000*0.85,aresample=48000,lowpass=f=9000,aecho=0.8:0.7:60|90:0.35|0.25",
+            temp_wav_proc
+        ]
+        subprocess.run(cmd_eff, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    elif effect == "sped_up":
+        cmd_eff = [
+            "ffmpeg", "-y", "-i", temp_wav_in,
+            "-filter_complex", "asetrate=48000*1.20,aresample=48000,treble=g=2:f=4000",
+            temp_wav_proc
+        ]
+        subprocess.run(cmd_eff, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    elif effect == "bass_boost":
+        cmd_eff = [
+            "ffmpeg", "-y", "-i", temp_wav_in,
+            "-filter_complex", "bass=g=7:f=65:w=0.6,compand=attacks=0.02:decays=0.1:points=-80/-80|-15/-15|0/-1",
+            temp_wav_proc
+        ]
+        subprocess.run(cmd_eff, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        process_8d_dsp(temp_wav_in, temp_wav_proc, PRESETS["standard"])
+
+    cmd_master = [
+        "ffmpeg", "-y",
+        "-i", temp_wav_proc,
+        "-i", input_audio,
+        "-map", "0:a",
+        "-map", "1:v?",
+        "-c:a", "libmp3lame",
+        "-b:a", MP3_BITRATE,
+        "-c:v", "copy",
+        "-id3v2_version", "3",
+        "-metadata", f"album=8D Remaster ({effect.upper()})",
+        "-filter:a", f"loudnorm=I={TARGET_LUFS}:LRA=7:TP={TARGET_TP}:dual_mono=false",
+        output_mp3
+    ]
+    subprocess.run(cmd_master, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    
+    for p in [temp_wav_in, temp_wav_proc]:
+        if os.path.exists(p):
+            try:
+                os.remove(p)
+            except:
+                pass
+                
+    return output_mp3
+
+def render_visualizer_video(
+    audio_path: str,
+    image_path: str,
+    output_mp4: str,
+    style_key: str = "style1_smooth_wave"
+) -> str:
+    style_info = VISUALIZER_STYLES.get(style_key, VISUALIZER_STYLES["style1_smooth_wave"])
+    
+    filter_complex = (
+        f"[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,boxblur=15:1[bg]; "
+        f"[0:v]scale=650:650[art]; "
+        f"[bg][art]overlay=(W-w)/2:(H-h)/2-50[stage1]; "
+        f"{style_info['filter']}"
+    )
+    
+    cmd_render = [
+        "ffmpeg", "-y",
+        "-loop", "1", "-i", image_path,
+        "-i", audio_path,
+        "-filter_complex", filter_complex,
+        "-map", "[v]", "-map", "1:a",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-tune", "stillimage",
+        "-r", "24",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "copy",
+        "-shortest",
+        output_mp4
+    ]
+    
+    subprocess.run(cmd_render, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return output_mp4
