@@ -129,13 +129,19 @@ def process_16d_dsp(input_wav: str, output_wav: str):
     stereo = np.vstack([out_l, out_r]).T
     wav.write(output_wav, sr, (stereo * 32767).astype(np.int16))
 
-def process_audio_effect(input_audio: str, output_mp3: str, effect: str = "8d") -> str:
+def process_audio_effect(input_audio: str, output_mp3: str, effect: str = "8d", progress_callback=None) -> str:
     temp_wav_in = str(TEMP_DIR / f"temp_in_{int(time.time()*1000)}.wav")
     temp_wav_proc = str(TEMP_DIR / f"temp_proc_{int(time.time()*1000)}.wav")
     
+    if progress_callback:
+        progress_callback(15, "Decoding audio to 48kHz PCM...")
+        
     cmd_dec = ["ffmpeg", "-y", "-i", input_audio, "-vn", "-ar", str(AUDIO_SAMPLE_RATE), "-ac", "2", temp_wav_in]
     subprocess.run(cmd_dec, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
+    if progress_callback:
+        progress_callback(40, f"Applying {effect.upper()} psychoacoustic spatial DSP...")
+        
     if effect == "8d":
         process_8d_dsp(temp_wav_in, temp_wav_proc, PRESETS["standard"])
     elif effect == "16d":
@@ -164,6 +170,9 @@ def process_audio_effect(input_audio: str, output_mp3: str, effect: str = "8d") 
     else:
         process_8d_dsp(temp_wav_in, temp_wav_proc, PRESETS["standard"])
 
+    if progress_callback:
+        progress_callback(80, "Mastering via EBU R128 (-14 LUFS) @ 320kbps...")
+
     cmd_master = [
         "ffmpeg", "-y",
         "-i", temp_wav_proc,
@@ -187,13 +196,18 @@ def process_audio_effect(input_audio: str, output_mp3: str, effect: str = "8d") 
             except:
                 pass
                 
+    if progress_callback:
+        progress_callback(100, "Audio processing complete!")
+        
     return output_mp3
 
 def render_visualizer_video(
     audio_path: str,
     image_path: str,
     output_mp4: str,
-    style_key: str = "style1_smooth_wave"
+    style_key: str = "style1_smooth_wave",
+    total_duration: float = 0.0,
+    progress_callback=None
 ) -> str:
     style_info = VISUALIZER_STYLES.get(style_key, VISUALIZER_STYLES["style1_smooth_wave"])
     
@@ -217,8 +231,34 @@ def render_visualizer_video(
         "-pix_fmt", "yuv420p",
         "-c:a", "copy",
         "-shortest",
+        "-progress", "pipe:1",
+        "-nostats",
         output_mp4
     ]
     
-    subprocess.run(cmd_render, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    process = subprocess.Popen(cmd_render, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    last_update = 0.0
+    
+    for line in process.stdout:
+        line = line.strip()
+        if line.startswith("out_time_us="):
+            try:
+                us = int(line.split("=")[1])
+                curr_sec = us / 1000000.0
+                if total_duration > 0 and progress_callback:
+                    now = time.time()
+                    if now - last_update >= 2.0:
+                        pct = min(98.0, max(5.0, (curr_sec / total_duration) * 100.0))
+                        progress_callback(pct, f"Rendering frame ({curr_sec:.1f}s / {total_duration:.1f}s)")
+                        last_update = now
+            except:
+                pass
+        elif line == "progress=end":
+            if progress_callback:
+                progress_callback(100.0, "Render complete!")
+                
+    process.wait()
+    if process.returncode != 0:
+        raise RuntimeError("FFmpeg video rendering failed!")
+        
     return output_mp4

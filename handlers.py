@@ -43,6 +43,22 @@ def get_style_selection_keyboard():
     kb.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_main"))
     return kb
 
+def render_progress_card(title: str, percentage: float, stage: str = "", detail: str = ""):
+    length = 10
+    pct = max(0.0, min(100.0, percentage))
+    filled = int(round(length * pct / 100))
+    bar = "▰" * filled + "▱" * (length - filled)
+    
+    lines = [
+        f"⚡ *{title}*",
+        f"`[{bar}]` *{pct:.1f}%*"
+    ]
+    if stage:
+        lines.append(f"📊 *Stage:* `{stage}`")
+    if detail:
+        lines.append(f"ℹ️ *Status:* `{detail}`")
+    return "\n".join(lines)
+
 def register_handlers(bot: TeleBot):
 
     @bot.message_handler(commands=['start'])
@@ -264,9 +280,15 @@ def register_handlers(bot: TeleBot):
                     USER_BUSY[user_id] = True
                     bot.answer_callback_query(call.id, f"Applying {effect_name.upper()} processing...")
                     
+                    initial_card = render_progress_card(
+                        f"Applying {effect_name.upper()} Spatial DSP",
+                        10.0,
+                        stage="1/1",
+                        detail="Initializing spatial engine..."
+                    )
                     status_msg = bot.send_message(
                         call.message.chat.id,
-                        f"🎧 *Applying {effect_name.upper()} Spatial DSP...*\n`[Processing + EBU R128 Master @ 320kbps]`",
+                        initial_card,
                         parse_mode="Markdown"
                     )
 
@@ -275,12 +297,38 @@ def register_handlers(bot: TeleBot):
                     song_clean = "".join(c for c in session.get("last_song_name", "audio") if c.isalnum() or c in (' ', '_', '-')).strip()
                     out_mp3 = str(user_out_dir / f"{song_clean}_{effect_name}.mp3")
 
-                    core.process_audio_effect(session["raw_audio_path"], out_mp3, effect=effect_name)
+                    def update_audio_progress(pct, detail):
+                        try:
+                            card = render_progress_card(
+                                f"Applying {effect_name.upper()} Spatial DSP",
+                                pct,
+                                stage="1/1",
+                                detail=detail
+                            )
+                            bot.edit_message_text(card, chat_id=status_msg.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
+                        except Exception:
+                            pass
+
+                    core.process_audio_effect(
+                        session["raw_audio_path"],
+                        out_mp3,
+                        effect=effect_name,
+                        progress_callback=update_audio_progress
+                    )
                     
                     db.save_session(user_id, processed_audio_path=out_mp3)
                     db.log_conversion(user_id, "audio", effect_name)
 
-                    bot.edit_message_text("🚀 *Uploading 320kbps Mastered Audio...*", chat_id=status_msg.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
+                    upload_card = render_progress_card(
+                        "Uploading Mastered Audio",
+                        99.0,
+                        stage="Finalizing",
+                        detail="Uploading 320kbps MP3 to Telegram..."
+                    )
+                    try:
+                        bot.edit_message_text(upload_card, chat_id=status_msg.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
+                    except:
+                        pass
                     
                     kb_after = types.InlineKeyboardMarkup()
                     kb_after.add(types.InlineKeyboardButton("🎬 Make Video of this Song", callback_data="make_video"))
@@ -315,9 +363,15 @@ def register_handlers(bot: TeleBot):
                     USER_BUSY[user_id] = True
                     bot.answer_callback_query(call.id, "Generating 8D Video...")
                     
+                    initial_card = render_progress_card(
+                        "Preparing 8D Video",
+                        10.0,
+                        stage="1/2",
+                        detail="Checking audio & background..."
+                    )
                     status_msg = bot.send_message(
                         call.message.chat.id,
-                        "🎬 *Step 1/2: Checking 8D Audio...*",
+                        initial_card,
                         parse_mode="Markdown"
                     )
 
@@ -327,9 +381,14 @@ def register_handlers(bot: TeleBot):
 
                     proc_audio = session.get("processed_audio_path")
                     if not proc_audio or not os.path.exists(proc_audio):
-                        bot.edit_message_text("🎧 *Step 1/2: Processing 8D Binaural Audio...*", chat_id=status_msg.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
+                        def update_pre_audio(pct, detail):
+                            try:
+                                card = render_progress_card("Generating 8D Audio First", pct, stage="1/2", detail=detail)
+                                bot.edit_message_text(card, chat_id=status_msg.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
+                            except:
+                                pass
                         proc_audio = str(user_out_dir / f"{song_clean}_8d.mp3")
-                        core.process_audio_effect(session["raw_audio_path"], proc_audio, effect="8d")
+                        core.process_audio_effect(session["raw_audio_path"], proc_audio, effect="8d", progress_callback=update_pre_audio)
                         db.save_session(user_id, processed_audio_path=proc_audio)
 
                     bg_image = session.get("custom_photo_path") or session.get("cover_art_path")
@@ -339,19 +398,44 @@ def register_handlers(bot: TeleBot):
                     style_key = session.get("selected_style", "style1_smooth_wave")
                     style_info = core.VISUALIZER_STYLES.get(style_key, core.VISUALIZER_STYLES["style1_smooth_wave"])
                     
-                    bot.edit_message_text(
-                        f"🎬 *Step 2/2: Rendering 1080p Video Visualizer...*\nStyle: `{style_info['name']}`\n`[Audio-Reactive Waveform + Ambient Background]`",
-                        chat_id=status_msg.chat.id,
-                        message_id=status_msg.message_id,
-                        parse_mode="Markdown"
-                    )
+                    # Extract song duration for live percentage tracking
+                    meta = core.extract_metadata_and_cover(proc_audio, str(config.TEMP_DIR / "temp_cov.jpg"))
+                    total_dur = meta.get("duration", 0.0)
+
+                    def update_video_progress(pct, detail):
+                        try:
+                            card = render_progress_card(
+                                f"Rendering Visualizer: {style_info['name']}",
+                                pct,
+                                stage="2/2",
+                                detail=detail
+                            )
+                            bot.edit_message_text(card, chat_id=status_msg.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
+                        except Exception:
+                            pass
 
                     out_video = str(user_out_dir / f"{song_clean}_8D_Video.mp4")
-                    core.render_visualizer_video(proc_audio, bg_image, out_video, style_key=style_key)
+                    core.render_visualizer_video(
+                        proc_audio,
+                        bg_image,
+                        out_video,
+                        style_key=style_key,
+                        total_duration=total_dur,
+                        progress_callback=update_video_progress
+                    )
                     
                     db.log_conversion(user_id, "video", "8d", visualizer_style=style_key)
 
-                    bot.edit_message_text("🚀 *Uploading Full HD 8D Video...*", chat_id=status_msg.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
+                    upload_card = render_progress_card(
+                        "Uploading Full HD 8D Video",
+                        99.0,
+                        stage="Finalizing",
+                        detail="Uploading MP4 to Telegram..."
+                    )
+                    try:
+                        bot.edit_message_text(upload_card, chat_id=status_msg.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
+                    except:
+                        pass
 
                     with open(out_video, 'rb') as vid_file:
                         bot.send_video(
