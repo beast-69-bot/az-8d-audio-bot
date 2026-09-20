@@ -20,19 +20,21 @@ USER_BUSY = {}
 def get_effect_keyboard(session: dict):
     kb = types.InlineKeyboardMarkup(row_width=2)
     b_8d = types.InlineKeyboardButton("🎧 8D Audio", callback_data="eff_8d")
+    b_8d_bass = types.InlineKeyboardButton("🔥 8D + Beat Boosted", callback_data="eff_8d_bass")
     b_vid = types.InlineKeyboardButton("🎬 8D Video (MP4)", callback_data="make_video")
     b_16d = types.InlineKeyboardButton("🌀 16D Audio", callback_data="eff_16d")
     b_slow = types.InlineKeyboardButton("🌌 Slowed + Reverb", callback_data="eff_slowed")
     b_fast = types.InlineKeyboardButton("⚡ Sped Up / Nightcore", callback_data="eff_sped_up")
-    b_bass = types.InlineKeyboardButton("💣 Bass Boosted", callback_data="eff_bass_boost")
+    b_bass = types.InlineKeyboardButton("💣 Extreme Bass Boost", callback_data="eff_bass_boost")
     
     current_style = session.get("selected_style", "style1_smooth_wave")
     style_name = core.VISUALIZER_STYLES.get(current_style, {}).get("name", "〰️ Smooth Wave")
     b_style = types.InlineKeyboardButton(f"🎨 Visualizer: {style_name}", callback_data="menu_styles")
     
-    kb.add(b_8d, b_vid)
-    kb.add(b_16d, b_slow)
-    kb.add(b_fast, b_bass)
+    kb.add(b_8d, b_8d_bass)
+    kb.add(b_vid, b_16d)
+    kb.add(b_slow, b_fast)
+    kb.add(b_bass)
     kb.add(b_style)
     return kb
 
@@ -74,6 +76,7 @@ def register_handlers(bot: TeleBot):
             f"━━━━━━━━━━━━━━━━━━\n"
             f"✨ *Available Audio Effects:*\n"
             f"• 🎧 *8D Audio* (360° binaural orbit around your head)\n"
+            f"• 🔥 *8D + Beat Boosted* (Heavy punchy 808/Kick + 360° orbit)\n"
             f"• 🌀 *16D Audio* (Dual counter-rotating vocals & synths)\n"
             f"• 🌌 *Slowed + Reverb* (Daycore / Chillwave)\n"
             f"• ⚡ *Sped Up / Nightcore* (Dance & high energy)\n"

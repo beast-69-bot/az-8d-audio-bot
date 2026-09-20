@@ -106,7 +106,7 @@ def simple_schroeder_reverb(mono_signal, sr, wet=0.15, decay=1.2):
     rev_r = np.pad(rev_clean, (r_delay_samples, 0))[:len(rev_clean)]
     return rev_l * wet, rev_r * wet
 
-def process_8d_dsp(input_wav_path, output_wav_path, preset: Preset8D):
+def process_8d_dsp(input_wav_path, output_wav_path, preset: Preset8D, boost_bass: bool = False):
     sr, data = wav.read(input_wav_path)
     if data.dtype == np.int16:
         data = data.astype(np.float32) / 32768.0
@@ -128,6 +128,10 @@ def process_8d_dsp(input_wav_path, output_wav_path, preset: Preset8D):
     # 1. Anchored Sub-Bass Split (4th Order Linkwitz-Riley)
     sos_lp = signal.butter(2, preset.bass_crossover_hz, 'low', fs=sr, output='sos')
     sub_bass_mono = signal.sosfilt(sos_lp, signal.sosfilt(sos_lp, mono))
+    
+    if boost_bass:
+        # Punchy 45-80Hz sub-bass boost (+7dB) with warm analog-style saturation
+        sub_bass_mono = np.tanh(sub_bass_mono * 2.2) * 1.35
     
     sos_hp = signal.butter(2, preset.bass_crossover_hz, 'high', fs=sr, output='sos')
     spatial_band_l = signal.sosfilt(sos_hp, signal.sosfilt(sos_hp, left_orig))

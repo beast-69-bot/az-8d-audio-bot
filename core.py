@@ -143,7 +143,9 @@ def process_audio_effect(input_audio: str, output_mp3: str, effect: str = "8d", 
         progress_callback(40, f"Applying {effect.upper()} psychoacoustic spatial DSP...")
         
     if effect == "8d":
-        process_8d_dsp(temp_wav_in, temp_wav_proc, PRESETS["standard"])
+        process_8d_dsp(temp_wav_in, temp_wav_proc, PRESETS["standard"], boost_bass=False)
+    elif effect == "8d_bass":
+        process_8d_dsp(temp_wav_in, temp_wav_proc, PRESETS["standard"], boost_bass=True)
     elif effect == "16d":
         process_16d_dsp(temp_wav_in, temp_wav_proc)
     elif effect == "slowed":
@@ -168,7 +170,7 @@ def process_audio_effect(input_audio: str, output_mp3: str, effect: str = "8d", 
         ]
         subprocess.run(cmd_eff, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     else:
-        process_8d_dsp(temp_wav_in, temp_wav_proc, PRESETS["standard"])
+        process_8d_dsp(temp_wav_in, temp_wav_proc, PRESETS["standard"], boost_bass=False)
 
     if progress_callback:
         progress_callback(80, "Mastering via EBU R128 (-14 LUFS) @ 320kbps...")
