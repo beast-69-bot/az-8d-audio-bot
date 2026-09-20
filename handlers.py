@@ -1,5 +1,10 @@
 """
 Telegram Bot Message and Callback Handlers for AZ 8D Audio Bot.
+Provides seamless user workflows:
+1. Standard Audio conversion (8D, 16D, Slowed, Nightcore, Bass Boost).
+2. Dedicated Video Studio: Select wallpaper before rendering, customize visualizer wave.
+3. As-Is Audio Video Rendering: Turn any pre-converted audio into video without double-processing.
+4. Flexible Photo Uploads: Send custom wallpapers before or after the audio file.
 """
 
 import os
@@ -21,36 +26,86 @@ USER_BUSY = {}
 def get_effect_keyboard(session: dict):
     kb = types.InlineKeyboardMarkup(row_width=2)
     b_8d = types.InlineKeyboardButton("🎧 8D Audio", callback_data="eff_8d")
-    b_8d_bass = types.InlineKeyboardButton("🔥 8D + Beat Boosted", callback_data="eff_8d_bass")
-    b_vid = types.InlineKeyboardButton("🎬 8D Video (MP4)", callback_data="make_video")
+    b_8d_bass = types.InlineKeyboardButton("🔥 8D + Beat Boost", callback_data="eff_8d_bass")
     b_16d = types.InlineKeyboardButton("🌀 16D Audio", callback_data="eff_16d")
     b_slow = types.InlineKeyboardButton("🌌 Slowed + Reverb", callback_data="eff_slowed")
-    b_fast = types.InlineKeyboardButton("⚡ Sped Up / Nightcore", callback_data="eff_sped_up")
+    b_fast = types.InlineKeyboardButton("⚡ Nightcore", callback_data="eff_sped_up")
     b_bass = types.InlineKeyboardButton("💣 Extreme Bass Boost", callback_data="eff_bass_boost")
     
-    current_style = session.get("selected_style", "style1_smooth_wave")
-    style_name = core.VISUALIZER_STYLES.get(current_style, {}).get("name", "〰️ Smooth Wave")
-    b_style = types.InlineKeyboardButton(f"🎨 Visualizer: {style_name}", callback_data="menu_styles")
-    
-    has_custom = bool(session.get("custom_photo_path"))
+    # Video Studio entry buttons
+    has_custom = bool(session.get("custom_photo_path") and os.path.exists(str(session.get("custom_photo_path"))))
+    b_vid_studio = types.InlineKeyboardButton("🎬 Open Video Studio (Wallpaper & Waveform) 🌟", callback_data="menu_video_studio")
     b_custom_photo = types.InlineKeyboardButton(
         "🖼️ Custom Wallpaper: ✅ Active" if has_custom else "🖼️ Set Custom Wallpaper (Photo)",
         callback_data="prompt_custom_photo"
     )
     
     kb.add(b_8d, b_8d_bass)
-    kb.add(b_vid, b_16d)
-    kb.add(b_slow, b_fast)
-    kb.add(b_bass)
-    kb.add(b_style)
+    kb.add(b_16d, b_slow)
+    kb.add(b_fast, b_bass)
+    kb.add(b_vid_studio)
     kb.add(b_custom_photo)
     return kb
+
+def get_video_studio_keyboard(session: dict):
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    
+    current_style = session.get("selected_style", "style1_smooth_wave")
+    style_name = core.VISUALIZER_STYLES.get(current_style, {}).get("name", "〰️ Smooth Wave")
+    has_custom = bool(session.get("custom_photo_path") and os.path.exists(str(session.get("custom_photo_path"))))
+    has_converted = bool(session.get("processed_audio_path") and os.path.exists(str(session.get("processed_audio_path"))))
+    
+    # 1. As-Is Render (Instant, preserves whatever audio is loaded)
+    if has_converted:
+        kb.add(types.InlineKeyboardButton("🎬 Render Video (Using Converted Audio As-Is)", callback_data="render_vid_asis"))
+    else:
+        kb.add(types.InlineKeyboardButton("🎬 Render Video (Original Audio As-Is)", callback_data="render_vid_asis"))
+        
+    # 2. 8D Spatial DSP Renders
+    kb.add(types.InlineKeyboardButton("🎧 Render Video (with 8D Spatial Audio)", callback_data="render_vid_8d"))
+    kb.add(types.InlineKeyboardButton("🔥 Render Video (with 8D + Beat Boosted)", callback_data="render_vid_8d_bass"))
+    
+    # 3. Customization Buttons
+    wall_btn = "🖼️ Change Wallpaper Photo (Active: ✅)" if has_custom else "🖼️ Upload Wallpaper Photo"
+    kb.add(types.InlineKeyboardButton(wall_btn, callback_data="prompt_custom_photo"))
+    kb.add(types.InlineKeyboardButton(f"🎨 Waveform: {style_name}", callback_data="menu_styles"))
+    kb.add(types.InlineKeyboardButton("⬅️ Back to Audio Effects Menu", callback_data="back_main"))
+    return kb
+
+def render_video_studio_text(session: dict):
+    has_custom = bool(session.get("custom_photo_path") and os.path.exists(str(session.get("custom_photo_path"))))
+    has_converted = bool(session.get("processed_audio_path") and os.path.exists(str(session.get("processed_audio_path"))))
+    has_cover = bool(session.get("cover_art_path") and os.path.exists(str(session.get("cover_art_path"))))
+    
+    if has_custom:
+        bg_status = "🖼️ Custom Photo Active ✅"
+    elif has_cover:
+        bg_status = "🎵 Embedded Album Cover"
+    else:
+        bg_status = "🌌 Default Background (Send photo to customize)"
+        
+    audio_type = "✨ Converted Audio" if has_converted else "🎵 Original Track"
+    current_style = session.get("selected_style", "style1_smooth_wave")
+    style_name = core.VISUALIZER_STYLES.get(current_style, {}).get("name", "〰️ Smooth Wave")
+    song_name = session.get("last_song_name", "Audio Track")
+    
+    return (
+        f"🎬 *8D Video Studio — Setup & Render*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🎵 *Track:* `{song_name}`\n"
+        f"🔊 *Audio:* `{audio_type}`\n"
+        f"🖼️ *Wallpaper:* `{bg_status}`\n"
+        f"🎨 *Waveform:* `{style_name}`\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"💡 *Tip:* Video me apni photo lagane ke liye chat me photo bhej sakte ho.\n"
+        f"👇 *Choose how to render your 1080p Video:*"
+    )
 
 def get_style_selection_keyboard():
     kb = types.InlineKeyboardMarkup(row_width=1)
     for k, v in core.VISUALIZER_STYLES.items():
         kb.add(types.InlineKeyboardButton(f"{v['name']} ({v['desc']})", callback_data=f"set_style_{k}"))
-    kb.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_main"))
+    kb.add(types.InlineKeyboardButton("⬅️ Back to Video Studio", callback_data="menu_video_studio"))
     return kb
 
 def render_progress_card(title: str, percentage: float, stage: str = "", detail: str = ""):
@@ -79,34 +134,29 @@ def register_handlers(bot: TeleBot):
         db.register_user(user_id, uname, fname)
         
         welcome_text = (
-            f"👋 *Welcome {fname} to AZ 8D Spatial Audio Studio!* 🎧✨\n\n"
-            f"I can convert any song into high-end **8D Spatial Audio** and render **Full HD Audio-Reactive Visualizer Videos**.\n\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"✨ *Available Audio Effects:*\n"
-            f"• 🎧 *8D Audio* (360° binaural orbit around your head)\n"
-            f"• 🔥 *8D + Beat Boosted* (Heavy punchy 808/Kick + 360° orbit)\n"
-            f"• 🌀 *16D Audio* (Dual counter-rotating vocals & synths)\n"
-            f"• 🌌 *Slowed + Reverb* (Daycore / Chillwave)\n"
-            f"• ⚡ *Sped Up / Nightcore* (Dance & high energy)\n"
-            f"• 💣 *Extreme Bass Boost* (Sub-bass synthesis)\n"
-            f"• 🎬 *1080p Video Visualizers* with 5 live frequency wave styles!\n"
-            f"• 🖼️ *Custom Wallpaper/Photo support* for video background\n"
-            f"• 🚀 *EBU R128 Mastered 320kbps MP3s*\n"
-            f"━━━━━━━━━━━━━━━━━━\n\n"
-            f"👉 *Just send me any Audio file or Song (.mp3, .m4a, .wav) to get started!*"
+            f"🎧 *Welcome to AZ 8D Audio & Video Studio, {fname}!* 🚀\n\n"
+            f"Transform any standard music track into an immersive **320 kbps 8D Spatial Audio** experience "
+            f"and generate **1080p Full HD Audio-Reactive Visualizer Videos**!\n\n"
+            f"✨ *Key Capabilities:*\n"
+            f"• **8D & 16D Binaural Audio**: Full 360° orbital sound with Linkwitz-Riley sub-bass anchor.\n"
+            f"• **Beat Boosted 8D**: +7dB sub-bass punch combined with spatial panning.\n"
+            f"• **Slowed + Reverb & Nightcore**: Atmospheric reverb and pitch manipulation.\n"
+            f"• **1080p Video Studio**: 5 live frequency wave styles with custom wallpaper support.\n"
+            f"• **As-Is Video Rendering**: Convert any pre-converted audio directly to video.\n\n"
+            f"📤 *Simply send any Song (MP3/M4A/WAV) or a Wallpaper Photo to begin!*"
         )
         bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown")
 
     @bot.message_handler(commands=['help'])
     def handle_help(message):
         help_text = (
-            f"💡 *How to Use AZ 8D Bot:*\n\n"
-            f"1. **Send a Song**: Send an MP3, audio or document file.\n"
-            f"2. **Choose Audio Effect**: Select *8D Audio*, *16D*, *Slowed+Reverb*, etc.\n"
-            f"3. **Make a Video**: Click `[🎬 8D Video]` to render a Full HD visualizer video.\n"
-            f"4. **Custom Image**: Want your own photo in the video? Just send a photo after sending your song!\n"
-            f"5. **Visualizer Styles**: Choose between 5 different wave & frequency styles.\n\n"
-            f"🎧 *Always use headphones/earphones for 360° binaural movement!*"
+            f"📖 *How to use AZ 8D Studio Bot:*\n\n"
+            f"1. **Audio Effects**: Send any audio track and pick 8D, 16D, Slowed, Nightcore, or Bass Boost.\n"
+            f"2. **Instant Video**: Click *'🎬 Open Video Studio'* to preview background and render 1080p video.\n"
+            f"3. **As-Is Video**: Render any favorite or pre-converted song without re-applying 8D.\n"
+            f"4. **Custom Wallpaper**: Send any photo (before or after sending your song) to set as the video background.\n"
+            f"5. **Visualizer Styles**: Choose between 5 live audio frequency wave styles.\n\n"
+            f"🎧 *Always use headphones for the 360° binaural experience!*"
         )
         bot.send_message(message.chat.id, help_text, parse_mode="Markdown")
 
@@ -123,42 +173,40 @@ def register_handlers(bot: TeleBot):
         bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
     def process_and_save_photo(user_id, chat_id, file_id, reply_to_msg_id=None):
-        session = db.get_session(user_id)
-        if not session or not session.get("raw_audio_path"):
-            bot.send_message(
-                chat_id,
-                "ℹ️ *Pehle Song / Audio file bhejo!*\nUske baad aap video background ke liye apni custom photo bhej sakte ho.",
-                reply_to_message_id=reply_to_msg_id,
-                parse_mode="Markdown"
-            )
-            return
+        session = db.get_session(user_id) or {}
+        user_temp_dir = config.TEMP_DIR / str(user_id)
+        user_temp_dir.mkdir(exist_ok=True, parents=True)
+        custom_photo_path = str(user_temp_dir / "custom_background.jpg")
 
         status_msg = bot.send_message(chat_id, "🖼️ *Downloading and applying your custom wallpaper...*",
                                       reply_to_message_id=reply_to_msg_id, parse_mode="Markdown")
         try:
             file_info = bot.get_file(file_id)
             downloaded = bot.download_file(file_info.file_path)
-            
-            user_temp_dir = config.TEMP_DIR / str(user_id)
-            user_temp_dir.mkdir(exist_ok=True, parents=True)
-            custom_photo_path = str(user_temp_dir / "custom_background.jpg")
             with open(custom_photo_path, 'wb') as f:
                 f.write(downloaded)
 
             db.save_session(user_id, custom_photo_path=custom_photo_path)
             session["custom_photo_path"] = custom_photo_path
-            
-            kb = types.InlineKeyboardMarkup(row_width=1)
-            kb.add(types.InlineKeyboardButton("🎬 Render 8D Video with this Photo", callback_data="make_video"))
-            kb.add(types.InlineKeyboardButton("🎨 Change Visualizer Style", callback_data="menu_styles"))
-            kb.add(types.InlineKeyboardButton("⬅️ Back to Audio Menu", callback_data="back_main"))
-            
-            song_title = session.get('last_song_name', 'your song')
+
+            # If no song is loaded yet, instruct user to send the song!
+            if not session.get("raw_audio_path"):
+                bot.edit_message_text(
+                    "✅ *Custom Wallpaper Saved!*\n\n"
+                    "👉 Ab aap apna **Song / Audio file** send karein.\n"
+                    "Aapki video automatically is wallpaper photo ke saath create hogi!",
+                    chat_id=status_msg.chat.id,
+                    message_id=status_msg.message_id,
+                    parse_mode="Markdown"
+                )
+                return
+
+            # If song is active, open Video Studio menu directly!
+            song_title = session.get('last_song_name', 'Song')
+            kb = get_video_studio_keyboard(session)
             bot.edit_message_text(
-                f"✅ *Custom Photo Saved Successfully!*\n\n"
-                f"🎵 Track: `{song_title}`\n"
-                f"🖼️ Wallpaper: *Active for Video Background*\n\n"
-                f"Click below to generate your 1080p 8D Visualizer Video:",
+                f"✅ *Custom Photo Saved & Applied to `{song_title}`!*\n\n"
+                f"{render_video_studio_text(session)}",
                 chat_id=status_msg.chat.id,
                 message_id=status_msg.message_id,
                 parse_mode="Markdown",
@@ -184,7 +232,7 @@ def register_handlers(bot: TeleBot):
         file_name = (getattr(file_obj, 'file_name', None) or "").lower()
         mime_type = (getattr(file_obj, 'mime_type', None) or "").lower()
 
-        # If user sent an image as a document/file, route it to photo wallpaper handler!
+        # If user sent an image as document/file, route it to photo wallpaper handler!
         if mime_type.startswith("image/") or any(file_name.endswith(ext) for ext in ('.jpg', '.jpeg', '.png', '.webp', '.bmp')):
             process_and_save_photo(user_id, message.chat.id, file_obj.file_id, message.message_id)
             return
@@ -214,25 +262,38 @@ def register_handlers(bot: TeleBot):
                 cover_path = str(user_temp_dir / "cover.jpg")
                 meta = core.extract_metadata_and_cover(raw_path, cover_path)
                 
+                # Preserve existing custom photo if user sent wallpaper before song!
+                existing_session = db.get_session(user_id) or {}
+                keep_photo = existing_session.get("custom_photo_path")
+                if keep_photo and not os.path.exists(keep_photo):
+                    keep_photo = None
+
                 db.save_session(
                     user_id=user_id,
                     last_song_name=meta["title"],
                     raw_audio_path=raw_path,
                     processed_audio_path=None,
                     cover_art_path=cover_path if meta["has_cover"] else None,
-                    custom_photo_path=None
+                    custom_photo_path=keep_photo
                 )
                 
                 session = db.get_session(user_id) or {}
                 dur_str = time.strftime('%M:%S', time.gmtime(meta['duration'])) if meta['duration'] else "Unknown"
                 
+                if keep_photo:
+                    wall_status = "🖼️ Custom Photo Active ✅"
+                elif meta["has_cover"]:
+                    wall_status = "🎵 Embedded Cover Art Found"
+                else:
+                    wall_status = "🌌 Default Background"
+
                 caption = (
                     f"🎵 *Track Detected:* `{meta['title']}`\n"
                     f"👤 *Artist:* `{meta['artist']}`\n"
                     f"⏱️ *Duration:* `{dur_str}`\n"
-                    f"🖼️ *Cover Art:* {'✅ Embedded Cover Found' if meta['has_cover'] else 'ℹ️ Default Background'}\n\n"
+                    f"🖼️ *Wallpaper:* `{wall_status}`\n\n"
                     f"💡 *Custom Photo:* Video me apni photo lagane ke liye chat me direct photo send karein!\n\n"
-                    f"👇 *Choose an Audio Effect or Generate Video:*"
+                    f"👇 *Choose an Audio Effect or Open Video Studio:*"
                 )
                 
                 kb = get_effect_keyboard(session)
@@ -264,6 +325,20 @@ def register_handlers(bot: TeleBot):
 
         data = call.data
 
+        # Video Studio Menu
+        if data == "menu_video_studio":
+            bot.answer_callback_query(call.id)
+            kb = get_video_studio_keyboard(session)
+            bot.edit_message_text(
+                render_video_studio_text(session),
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                parse_mode="Markdown",
+                reply_markup=kb
+            )
+            return
+
+        # Visualizer Wave Styles Menu
         if data == "menu_styles":
             bot.edit_message_text(
                 "🎨 *Select Visualizer Waveform Style:*\n\nChoose how you want the live audio frequency wave to look on the video base:",
@@ -274,30 +349,30 @@ def register_handlers(bot: TeleBot):
             )
             return
 
+        # Style Selection
         if data.startswith("set_style_"):
             style_key = data.replace("set_style_", "")
             db.save_session(user_id, selected_style=style_key)
             session["selected_style"] = style_key
-            style_name = core.VISUALIZER_STYLES.get(style_key, {}).get("name", style_key)
+            style_info = core.VISUALIZER_STYLES.get(style_key, {})
+            style_name = style_info.get("name", style_key)
             bot.answer_callback_query(call.id, f"✅ Selected: {style_name}")
             
-            caption = (
-                f"🎵 *Track:* `{session.get('last_song_name', 'Song')}`\n"
-                f"🎨 *Current Visualizer:* `{style_name}`\n\n"
-                f"👇 *Choose an option:*"
-            )
+            # Return directly to Video Studio menu
             bot.edit_message_text(
-                caption,
+                render_video_studio_text(session),
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
                 parse_mode="Markdown",
-                reply_markup=get_effect_keyboard(session)
+                reply_markup=get_video_studio_keyboard(session)
             )
             return
 
+        # Return to Main Audio Menu
         if data == "back_main":
+            song_title = session.get('last_song_name', 'Song')
             bot.edit_message_text(
-                f"🎵 *Track:* `{session.get('last_song_name', 'Song')}`\n\n👇 *Choose an Audio Effect or Video:*",
+                f"🎵 *Track:* `{song_title}`\n\n👇 *Choose an Audio Effect or Open Video Studio:*",
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
                 parse_mode="Markdown",
@@ -305,22 +380,24 @@ def register_handlers(bot: TeleBot):
             )
             return
 
+        # Wallpaper Upload Guidance
         if data == "prompt_custom_photo":
             bot.answer_callback_query(call.id)
             kb = types.InlineKeyboardMarkup()
-            kb.add(types.InlineKeyboardButton("⬅️ Back to Audio Menu", callback_data="back_main"))
+            kb.add(types.InlineKeyboardButton("⬅️ Back to Video Studio", callback_data="menu_video_studio"))
             bot.send_message(
                 call.message.chat.id,
                 "🖼️ *How to Set Custom Wallpaper for Video:*\n\n"
-                "1️⃣ Bas chat me direct koi bhi **Photo** send kar do (ya document/file ke roop me photo bhejo).\n"
+                "1️⃣ Bas chat me direct koi bhi **Photo** send kar do (ya document/file format me photo bhejo).\n"
                 "2️⃣ Bot us photo ko download karke 1080p video background me automatically set kar dega.\n"
-                "3️⃣ Uske baad aap **🎬 Render 8D Video** click karte hi video usi photo background ke saath generate ho jayegi!\n\n"
+                "3️⃣ Uske baad aap Video Studio me instant render button daba sakte ho!\n\n"
                 "📸 *Abhi chat me koi bhi photo send karein!*",
                 parse_mode="Markdown",
                 reply_markup=kb
             )
             return
 
+        # Audio Effects Processing
         if data.startswith("eff_"):
             effect_name = data.replace("eff_", "")
             if USER_BUSY.get(user_id):
@@ -369,6 +446,7 @@ def register_handlers(bot: TeleBot):
                     )
                     
                     db.save_session(user_id, processed_audio_path=out_mp3)
+                    session["processed_audio_path"] = out_mp3
                     db.log_conversion(user_id, "audio", effect_name)
 
                     upload_card = render_progress_card(
@@ -382,8 +460,10 @@ def register_handlers(bot: TeleBot):
                     except:
                         pass
                     
-                    kb_after = types.InlineKeyboardMarkup()
-                    kb_after.add(types.InlineKeyboardButton("🎬 Make Video of this Song", callback_data="make_video"))
+                    kb_after = types.InlineKeyboardMarkup(row_width=1)
+                    kb_after.add(types.InlineKeyboardButton("🎬 Open Video Studio for this Audio", callback_data="menu_video_studio"))
+                    kb_after.add(types.InlineKeyboardButton("🖼️ Add Wallpaper & Render Video", callback_data="prompt_custom_photo"))
+                    kb_after.add(types.InlineKeyboardButton("⬅️ Back to Audio Menu", callback_data="back_main"))
 
                     uploader.send_audio_smart(
                         bot=bot,
@@ -407,7 +487,8 @@ def register_handlers(bot: TeleBot):
             threading.Thread(target=run_audio_process, daemon=True).start()
             return
 
-        if data == "make_video":
+        # Video Rendering Workflows (As-Is, 8D Spatial, 8D Bass Boosted)
+        if data in ("make_video", "render_vid_asis", "render_vid_8d", "render_vid_8d_bass"):
             if USER_BUSY.get(user_id):
                 bot.answer_callback_query(call.id, "A task is already processing!", show_alert=True)
                 return
@@ -415,35 +496,73 @@ def register_handlers(bot: TeleBot):
             def run_video_process():
                 try:
                     USER_BUSY[user_id] = True
-                    bot.answer_callback_query(call.id, "Generating 8D Video...")
+                    bot.answer_callback_query(call.id, "Rendering Video...")
                     
-                    initial_card = render_progress_card(
-                        "Preparing 8D Video",
-                        10.0,
-                        stage="1/2",
-                        detail="Checking audio & background..."
-                    )
-                    status_msg = bot.send_message(
-                        call.message.chat.id,
-                        initial_card,
-                        parse_mode="Markdown"
-                    )
-
                     user_out_dir = config.OUTPUT_DIR / str(user_id)
                     user_out_dir.mkdir(exist_ok=True, parents=True)
                     song_clean = "".join(c for c in session.get("last_song_name", "audio") if c.isalnum() or c in (' ', '_', '-')).strip()
 
-                    proc_audio = session.get("processed_audio_path")
-                    if not proc_audio or not os.path.exists(proc_audio):
-                        def update_pre_audio(pct, detail):
-                            try:
-                                card = render_progress_card("Generating 8D Audio First", pct, stage="1/2", detail=detail)
-                                bot.edit_message_text(card, chat_id=status_msg.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
-                            except:
-                                pass
-                        proc_audio = str(user_out_dir / f"{song_clean}_8d.mp3")
-                        core.process_audio_effect(session["raw_audio_path"], proc_audio, effect="8d", progress_callback=update_pre_audio)
-                        db.save_session(user_id, processed_audio_path=proc_audio)
+                    status_msg = None
+
+                    # Flow 1: As-Is Audio Rendering (Instant, no re-encoding)
+                    if data == "render_vid_asis":
+                        proc_audio = session.get("processed_audio_path")
+                        if not proc_audio or not os.path.exists(proc_audio):
+                            proc_audio = session["raw_audio_path"]
+                        video_suffix = "Video"
+                        video_title = f"{song_clean} (Visualizer Video)"
+
+                    # Flow 2: 8D + Beat Boosted Video
+                    elif data == "render_vid_8d_bass":
+                        proc_audio = str(user_out_dir / f"{song_clean}_8d_bass.mp3")
+                        if not os.path.exists(proc_audio):
+                            initial_card = render_progress_card("Generating 8D + Beat Boosted First", 10.0, stage="1/2", detail="Applying bass punch...")
+                            status_msg = bot.send_message(call.message.chat.id, initial_card, parse_mode="Markdown")
+                            def update_pre_audio(pct, detail):
+                                try:
+                                    card = render_progress_card("Generating 8D + Beat Boosted First", pct, stage="1/2", detail=detail)
+                                    bot.edit_message_text(card, chat_id=status_msg.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
+                                except:
+                                    pass
+                            core.process_audio_effect(session["raw_audio_path"], proc_audio, effect="8d_bass", progress_callback=update_pre_audio)
+                            db.save_session(user_id, processed_audio_path=proc_audio)
+                            session["processed_audio_path"] = proc_audio
+                        video_suffix = "8D_Bass_Video"
+                        video_title = f"{song_clean} (8D + Beat Boosted Video)"
+
+                    # Flow 3: 8D Spatial Audio Video (or default make_video)
+                    else:
+                        proc_audio = session.get("processed_audio_path")
+                        if not proc_audio or not os.path.exists(proc_audio) or "_8d" not in os.path.basename(proc_audio):
+                            initial_card = render_progress_card("Generating 8D Audio First", 10.0, stage="1/2", detail="Applying 360° binaural pan...")
+                            status_msg = bot.send_message(call.message.chat.id, initial_card, parse_mode="Markdown")
+                            def update_pre_audio(pct, detail):
+                                try:
+                                    card = render_progress_card("Generating 8D Audio First", pct, stage="1/2", detail=detail)
+                                    bot.edit_message_text(card, chat_id=status_msg.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
+                                except:
+                                    pass
+                            proc_audio = str(user_out_dir / f"{song_clean}_8d.mp3")
+                            core.process_audio_effect(session["raw_audio_path"], proc_audio, effect="8d", progress_callback=update_pre_audio)
+                            db.save_session(user_id, processed_audio_path=proc_audio)
+                            session["processed_audio_path"] = proc_audio
+                        video_suffix = "8D_Video"
+                        video_title = f"{song_clean} (8D Audio + Visualizer)"
+
+                    # Video Render Stage
+                    initial_video_card = render_progress_card(
+                        "Rendering 1080p Video",
+                        10.0,
+                        stage="Visualizer Engine",
+                        detail="Initializing FFmpeg hardware encoder..."
+                    )
+                    if status_msg:
+                        try:
+                            bot.edit_message_text(initial_video_card, chat_id=status_msg.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
+                        except:
+                            status_msg = bot.send_message(call.message.chat.id, initial_video_card, parse_mode="Markdown")
+                    else:
+                        status_msg = bot.send_message(call.message.chat.id, initial_video_card, parse_mode="Markdown")
 
                     bg_image = session.get("custom_photo_path") or session.get("cover_art_path")
                     if not bg_image or not os.path.exists(bg_image):
@@ -452,23 +571,22 @@ def register_handlers(bot: TeleBot):
                     style_key = session.get("selected_style", "style1_smooth_wave")
                     style_info = core.VISUALIZER_STYLES.get(style_key, core.VISUALIZER_STYLES["style1_smooth_wave"])
                     
-                    # Extract song duration for live percentage tracking
                     meta = core.extract_metadata_and_cover(proc_audio, str(config.TEMP_DIR / "temp_cov.jpg"))
                     total_dur = meta.get("duration", 0.0)
 
                     def update_video_progress(pct, detail):
                         try:
                             card = render_progress_card(
-                                f"Rendering Visualizer: {style_info['name']}",
+                                f"Rendering: {style_info['name']}",
                                 pct,
-                                stage="2/2",
+                                stage="Video Encoding",
                                 detail=detail
                             )
                             bot.edit_message_text(card, chat_id=status_msg.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
                         except Exception:
                             pass
 
-                    out_video = str(user_out_dir / f"{song_clean}_8D_Video.mp4")
+                    out_video = str(user_out_dir / f"{song_clean}_{video_suffix}.mp4")
                     core.render_visualizer_video(
                         proc_audio,
                         bg_image,
@@ -478,26 +596,15 @@ def register_handlers(bot: TeleBot):
                         progress_callback=update_video_progress
                     )
                     
-                    db.log_conversion(user_id, "video", "8d", visualizer_style=style_key)
-
-                    upload_card = render_progress_card(
-                        "Uploading Full HD 8D Video",
-                        99.0,
-                        stage="Finalizing",
-                        detail="Uploading MP4 to Telegram..."
-                    )
-                    try:
-                        bot.edit_message_text(upload_card, chat_id=status_msg.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
-                    except:
-                        pass
+                    db.log_conversion(user_id, "video", data, visualizer_style=style_key)
 
                     def update_upload_progress(pct, detail):
                         try:
                             card = render_progress_card(
-                                f"Uploading 8D Video ({detail})",
+                                f"Uploading 1080p Video ({detail})",
                                 pct,
                                 stage="Finalizing",
-                                detail="Uploading via MTProto Engine..."
+                                detail="Uploading via High-Speed MTProto Engine..."
                             )
                             bot.edit_message_text(card, chat_id=status_msg.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
                         except Exception:
@@ -507,7 +614,7 @@ def register_handlers(bot: TeleBot):
                         bot=bot,
                         chat_id=call.message.chat.id,
                         file_path=out_video,
-                        caption=f"🎬 *{song_clean} (8D Audio + Visualizer)*\n\n• Visualizer: `{style_info['name']}`\n• Resolution: 1080p Full HD\n• 🎧 *Wear Headphones for 360° Movement!*",
+                        caption=f"🎬 *{video_title}*\n\n• Visualizer: `{style_info['name']}`\n• Resolution: 1080p Full HD\n• 🎧 *Wear Headphones for 360° Movement!*",
                         supports_streaming=True,
                         progress_callback=update_upload_progress
                     )
