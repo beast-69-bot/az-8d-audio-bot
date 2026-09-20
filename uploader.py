@@ -17,11 +17,11 @@ logger = logging.getLogger(__name__)
 async def _pyrogram_send_video(chat_id, file_path, caption="", supports_streaming=True, progress_callback=None):
     from pyrogram import Client
     async with Client(
-        "az_studio_mtproto",
+        "az_studio_session",
         api_id=config.API_ID,
         api_hash=config.API_HASH,
         bot_token=config.BOT_TOKEN,
-        in_memory=True
+        workdir=str(config.TEMP_DIR)
     ) as app:
         async def pyro_progress(current, total):
             if progress_callback and total > 0:
@@ -42,11 +42,11 @@ async def _pyrogram_send_video(chat_id, file_path, caption="", supports_streamin
 async def _pyrogram_send_audio(chat_id, file_path, title="", performer="", caption=""):
     from pyrogram import Client
     async with Client(
-        "az_studio_mtproto",
+        "az_studio_session",
         api_id=config.API_ID,
         api_hash=config.API_HASH,
         bot_token=config.BOT_TOKEN,
-        in_memory=True
+        workdir=str(config.TEMP_DIR)
     ) as app:
         return await app.send_audio(
             chat_id=chat_id,
@@ -58,14 +58,14 @@ async def _pyrogram_send_audio(chat_id, file_path, title="", performer="", capti
 
 def send_video_smart(bot, chat_id, file_path, caption="", supports_streaming=True, progress_callback=None):
     """
-    Sends video using standard Telegram Bot API if < 45MB.
-    Automatically escalates to MTProto client (up to 2GB) if >= 45MB or on 413 error.
+    Sends video using standard Telegram Bot API if < 49MB.
+    Automatically escalates to MTProto client (up to 2GB) if >= 49MB or on 413 error.
     """
     file_size = os.path.getsize(file_path)
     file_size_mb = file_size / (1024 * 1024)
     logger.info(f"Attempting video upload: {file_path} ({file_size_mb:.2f} MB) to {chat_id}")
 
-    if file_size_mb < 45.0 and bot:
+    if file_size_mb < 49.0 and bot:
         try:
             with open(file_path, 'rb') as f:
                 return bot.send_video(
