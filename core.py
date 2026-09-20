@@ -19,28 +19,28 @@ from processor import PRESETS, process_8d_dsp, simple_schroeder_reverb
 VISUALIZER_STYLES = {
     "style1_smooth_wave": {
         "name": "〰️ Smooth Center Wave",
-        "desc": "Minimalist white glowing liquid wave",
-        "filter": "[1:a]showwaves=s=1200x160:mode=cline:colors=white@0.9:scale=cbrt,format=yuva420p[vis]; [stage1][vis]overlay=(W-w)/2:H-h-70[v]"
+        "desc": "Minimalist white glowing liquid wave behind card",
+        "filter": "[1:a]showwaves=s=1440x360:mode=cline:colors=white@0.9:scale=cbrt,format=yuva420p[vis]; [bg][vis]overlay=(W-w)/2:(H-h)/2[stage1]; [stage1][art]overlay=(W-w)/2:(H-h)/2[v]"
     },
     "style2_spectrum_bars": {
         "name": "📊 Spectrum Equalizer Bars",
-        "desc": "Dynamic logarithmic DJ frequency bars",
-        "filter": "[1:a]showfreqs=s=1200x200:mode=bar:fscale=log:ascale=cbrt:colors=white@0.85,format=yuva420p[vis]; [stage1][vis]overlay=(W-w)/2:H-h-60[v]"
+        "desc": "Dynamic logarithmic DJ frequency bars behind card",
+        "filter": "[1:a]showfreqs=s=1440x380:mode=bar:fscale=log:ascale=cbrt:colors=0x38bdf8@0.9,format=yuva420p[vis]; [bg][vis]overlay=(W-w)/2:(H-h)/2+50[stage1]; [stage1][art]overlay=(W-w)/2:(H-h)/2[v]"
     },
     "style3_mirrored_dual": {
         "name": "🪞 Mirrored Dual Frequency",
         "desc": "Symmetric top-bottom blue frequency wave",
-        "filter": "[1:a]showwaves=s=1200x200:mode=p2p:colors=0x38bdf8@0.9:scale=sqrt,format=yuva420p[vis]; [stage1][vis]overlay=(W-w)/2:H-h-70[v]"
+        "filter": "[1:a]showwaves=s=1440x440:mode=p2p:colors=0x38bdf8@0.9:scale=sqrt,format=yuva420p[vis]; [bg][vis]overlay=(W-w)/2:(H-h)/2[stage1]; [stage1][art]overlay=(W-w)/2:(H-h)/2[v]"
     },
     "style4_neon_gradient": {
         "name": "🌈 Neon Cyber Glow",
         "desc": "Cyan to Rose Pink color-shifting wave",
-        "filter": "[1:a]showwaves=s=1200x180:mode=cline:colors=0x00f5ff|0xf43f5e:scale=cbrt,format=yuva420p[vis]; [stage1][vis]overlay=(W-w)/2:H-h-70[v]"
+        "filter": "[1:a]showwaves=s=1440x360:mode=cline:colors=0x00f5ff|0xf43f5e:scale=cbrt,format=yuva420p[vis]; [bg][vis]overlay=(W-w)/2:(H-h)/2[stage1]; [stage1][art]overlay=(W-w)/2:(H-h)/2[v]"
     },
     "style5_stereo_scope": {
         "name": "🌀 3D Stereo Orbit Scope",
-        "desc": "Real-time circular scope that tracks 8D rotation",
-        "filter": "[1:a]avectorscope=s=350x350:m=lissajous:draw=line:scale=sqrt:rc=0:gc=240:bc=255:rf=0:gf=180:bf=240,format=yuva420p[vis]; [stage1][vis]overlay=(W-w)/2:H-h-40[v]"
+        "desc": "Real-time circular scope that tracks 8D rotation around card",
+        "filter": "[1:a]avectorscope=s=920x920:m=lissajous:draw=line:scale=sqrt:rc=0:gc=245:bc=255:rf=0:gf=200:bf=255,format=yuva420p[vis]; [bg][vis]overlay=(W-w)/2:(H-h)/2[stage1]; [stage1][art]overlay=(W-w)/2:(H-h)/2[v]"
     }
 }
 
@@ -214,9 +214,8 @@ def render_visualizer_video(
     style_info = VISUALIZER_STYLES.get(style_key, VISUALIZER_STYLES["style1_smooth_wave"])
     
     filter_complex = (
-        f"[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,boxblur=15:1[bg]; "
-        f"[0:v]scale=650:650[art]; "
-        f"[bg][art]overlay=(W-w)/2:(H-h)/2-50[stage1]; "
+        f"[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,boxblur=20:2,eq=brightness=-0.08:contrast=1.05[bg]; "
+        f"[0:v]scale=620:620,pad=628:628:4:4:color=white@0.35[art]; "
         f"{style_info['filter']}"
     )
     
