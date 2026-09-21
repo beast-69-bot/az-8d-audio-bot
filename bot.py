@@ -4,6 +4,12 @@ Main Executable Runner for AZ 8D Spatial Audio & Video Bot (@azmusicstudiobot).
 
 import sys
 import logging
+
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
 from telebot import TeleBot
 import config
 import handlers

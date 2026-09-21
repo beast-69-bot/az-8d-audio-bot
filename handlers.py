@@ -333,6 +333,7 @@ def register_handlers(bot: TeleBot):
     @bot.message_handler(content_types=['video', 'video_note'])
     def handle_video_upload(message):
         user_id = message.from_user.id
+        logger.info(f"Received video upload from user {user_id}")
         db.register_user(user_id, message.from_user.username, message.from_user.first_name)
         video_obj = message.video or message.video_note
         if video_obj:
@@ -341,6 +342,7 @@ def register_handlers(bot: TeleBot):
     @bot.message_handler(content_types=['audio', 'document'])
     def handle_audio_upload(message):
         user_id = message.from_user.id
+        logger.info(f"Received audio/document upload from user {user_id}")
         db.register_user(user_id, message.from_user.username, message.from_user.first_name)
         
         if is_user_busy(user_id):
@@ -457,6 +459,7 @@ def register_handlers(bot: TeleBot):
             return
 
         data = call.data
+        logger.info(f"Received callback '{data}' from user {user_id}")
 
         # Video Studio Menu
         if data == "menu_video_studio":
@@ -538,8 +541,10 @@ def register_handlers(bot: TeleBot):
                 return
 
             def run_audio_process():
+                start_time = time.time()
                 try:
                     set_user_busy(user_id, True)
+                    logger.info(f"User {user_id} started audio process: {effect_name}")
 
                     if effect_name == "vocal_ai":
                         engine_title = "AI Vocal Separation (Meta Demucs)"
@@ -648,6 +653,7 @@ def register_handlers(bot: TeleBot):
                         bot.delete_message(status_msg.chat.id, status_msg.message_id)
                     except Exception:
                         pass
+                    logger.info(f"User {user_id} finished audio process {effect_name} in {time.time() - start_time:.2f}s")
                 except Exception as e:
                     logger.error(f"Audio process error: {e}", exc_info=True)
                     bot.send_message(call.message.chat.id, f"❌ Failed to process audio: {e}")
