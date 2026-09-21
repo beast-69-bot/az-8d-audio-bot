@@ -13,7 +13,7 @@ input_audio = session["raw_audio_path"]
 out_mp3 = "/home/anshu/az-8d-audio-bot/temp/test_vocal_out.mp3"
 
 import sqlite3
-conn = sqlite3.connect('database.db')
+conn = sqlite3.connect(config.DB_PATH)
 print("CONVERSIONS:")
 for r in conn.execute('SELECT * FROM conversions ORDER BY id DESC LIMIT 5').fetchall():
     print(r)
