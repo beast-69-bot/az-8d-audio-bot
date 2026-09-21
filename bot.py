@@ -49,7 +49,13 @@ def main():
         except Exception as we:
             logger.warning(f"Could not remove webhook: {we}")
 
-        bot.infinity_polling(timeout=20, long_polling_timeout=15)
+        import telebot.util
+        logger.info(f"Starting infinity polling with full allowed_updates: {telebot.util.update_types}")
+        bot.infinity_polling(
+            timeout=20,
+            long_polling_timeout=15,
+            allowed_updates=telebot.util.update_types
+        )
     except Exception as e:
         logger.critical(f"Bot polling error: {e}", exc_info=True)
 
