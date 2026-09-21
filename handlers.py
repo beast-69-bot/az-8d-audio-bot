@@ -31,6 +31,8 @@ def get_effect_keyboard(session: dict):
     b_slow = types.InlineKeyboardButton("🌌 Slowed + Reverb", callback_data="eff_slowed")
     b_fast = types.InlineKeyboardButton("⚡ Nightcore", callback_data="eff_sped_up")
     b_bass = types.InlineKeyboardButton("💣 Extreme Bass Boost", callback_data="eff_bass_boost")
+    b_vocal_ai = types.InlineKeyboardButton("🤖 AI Vocal Remover", callback_data="eff_vocal_ai")
+    b_vocal_dsp = types.InlineKeyboardButton("⚡ Fast Karaoke (DSP)", callback_data="eff_vocal_dsp")
     
     # Video Studio entry buttons
     has_custom = bool(session.get("custom_photo_path") and os.path.exists(str(session.get("custom_photo_path"))))
@@ -43,6 +45,7 @@ def get_effect_keyboard(session: dict):
     kb.add(b_8d, b_8d_bass)
     kb.add(b_16d, b_slow)
     kb.add(b_fast, b_bass)
+    kb.add(b_vocal_ai, b_vocal_dsp)
     kb.add(b_vid_studio)
     kb.add(b_custom_photo)
     return kb
@@ -135,15 +138,17 @@ def register_handlers(bot: TeleBot):
         
         welcome_text = (
             f"🎧 *Welcome to AZ 8D Audio & Video Studio, {fname}!* 🚀\n\n"
-            f"Transform any standard music track into an immersive **320 kbps 8D Spatial Audio** experience "
-            f"and generate **1080p Full HD Audio-Reactive Visualizer Videos**!\n\n"
+            f"Transform any standard music track or video into an immersive **320 kbps 8D Spatial Audio** experience, "
+            f"isolate instrumentals with **AI Vocal Remover**, and generate **1080p Full HD Visualizer Videos**!\n\n"
             f"✨ *Key Capabilities:*\n"
+            f"• **🎬 Video ➡️ 320 kbps Audio**: Send any video/reel to extract crystal-clear MP3 + cover art.\n"
+            f"• **🎤 Vocal Remover / Karaoke**: Meta Demucs AI & Fast DSP to strip vocals from any song.\n"
             f"• **8D & 16D Binaural Audio**: Full 360° orbital sound with Linkwitz-Riley sub-bass anchor.\n"
             f"• **Beat Boosted 8D**: +7dB sub-bass punch combined with spatial panning.\n"
             f"• **Slowed + Reverb & Nightcore**: Atmospheric reverb and pitch manipulation.\n"
             f"• **1080p Video Studio**: 5 live frequency wave styles with custom wallpaper support.\n"
             f"• **As-Is Video Rendering**: Convert any pre-converted audio directly to video.\n\n"
-            f"📤 *Simply send any Song (MP3/M4A/WAV) or a Wallpaper Photo to begin!*"
+            f"📤 *Simply send any Song (MP3/WAV), Video (MP4/MKV), or Wallpaper Photo to begin!*"
         )
         bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown")
 
@@ -152,10 +157,12 @@ def register_handlers(bot: TeleBot):
         help_text = (
             f"📖 *How to use AZ 8D Studio Bot:*\n\n"
             f"1. **Audio Effects**: Send any audio track and pick 8D, 16D, Slowed, Nightcore, or Bass Boost.\n"
-            f"2. **Instant Video**: Click *'🎬 Open Video Studio'* to preview background and render 1080p video.\n"
-            f"3. **As-Is Video**: Render any favorite or pre-converted song without re-applying 8D.\n"
-            f"4. **Custom Wallpaper**: Send any photo (before or after sending your song) to set as the video background.\n"
-            f"5. **Visualizer Styles**: Choose between 5 live audio frequency wave styles.\n\n"
+            f"2. **Video to Audio**: Send any video/reel to extract 320 kbps MP3 + cover art instantly.\n"
+            f"3. **Vocal Remover**: Remove vocals with AI (Demucs) or Fast DSP for instant karaoke.\n"
+            f"4. **Instant Video**: Click *'🎬 Open Video Studio'* to preview background and render 1080p video.\n"
+            f"5. **As-Is Video**: Render any favorite or pre-converted song without re-applying 8D.\n"
+            f"6. **Custom Wallpaper**: Send any photo (before or after sending your song) to set as the video background.\n"
+            f"7. **Visualizer Styles**: Choose between 5 live audio frequency wave styles.\n\n"
             f"🎧 *Always use headphones for the 360° binaural experience!*"
         )
         bot.send_message(message.chat.id, help_text, parse_mode="Markdown")
@@ -216,6 +223,106 @@ def register_handlers(bot: TeleBot):
             logger.error(f"Photo save error: {e}")
             bot.edit_message_text(f"❌ Failed to save photo: {e}", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
 
+    def process_and_extract_video(user_id, chat_id, file_obj, reply_to_msg_id=None):
+        if USER_BUSY.get(user_id):
+            bot.send_message(chat_id, "⚠️ You already have an active task in progress. Please wait a few moments!", reply_to_message_id=reply_to_msg_id)
+            return
+
+        file_size_mb = (getattr(file_obj, 'file_size', 0) or 0) / (1024 * 1024)
+        if file_size_mb > config.MAX_AUDIO_SIZE_MB:
+            bot.send_message(chat_id, f"❌ Video file too large! Maximum supported size is {config.MAX_AUDIO_SIZE_MB}MB.", reply_to_message_id=reply_to_msg_id)
+            return
+
+        status_msg = bot.send_message(chat_id, "📥 *Downloading video for 320 kbps studio audio extraction...*", reply_to_message_id=reply_to_msg_id, parse_mode="Markdown")
+
+        def download_and_extract():
+            try:
+                USER_BUSY[user_id] = True
+                user_temp_dir = config.TEMP_DIR / str(user_id)
+                user_temp_dir.mkdir(exist_ok=True, parents=True)
+
+                raw_video_path = str(user_temp_dir / f"input_video_{int(time.time())}.mp4")
+                file_info = bot.get_file(file_obj.file_id)
+                downloaded = bot.download_file(file_info.file_path)
+                with open(raw_video_path, 'wb') as f:
+                    f.write(downloaded)
+
+                def update_extract_progress(pct, detail):
+                    try:
+                        card = render_progress_card("Extracting Studio Audio", pct, stage="Audio Extraction", detail=detail)
+                        bot.edit_message_text(card, chat_id=status_msg.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
+                    except Exception:
+                        pass
+
+                extracted_mp3 = str(user_temp_dir / f"extracted_audio_{int(time.time())}.mp3")
+                extracted_cover = str(user_temp_dir / "cover.jpg")
+
+                meta = core.extract_audio_from_video(
+                    raw_video_path,
+                    extracted_mp3,
+                    out_cover_path=extracted_cover,
+                    progress_callback=update_extract_progress
+                )
+
+                existing_session = db.get_session(user_id) or {}
+                keep_photo = existing_session.get("custom_photo_path")
+                if keep_photo and not os.path.exists(keep_photo):
+                    keep_photo = None
+
+                # Video cover art can also serve as wallpaper if user hasn't set one
+                if not keep_photo and meta.get("has_cover") and os.path.exists(extracted_cover):
+                    keep_photo = extracted_cover
+
+                db.save_session(
+                    user_id=user_id,
+                    last_song_name=meta.get("title") or "Video Audio Track",
+                    raw_audio_path=extracted_mp3,
+                    processed_audio_path=None,
+                    cover_art_path=extracted_cover if meta.get("has_cover") else None,
+                    custom_photo_path=keep_photo
+                )
+
+                session = db.get_session(user_id) or {}
+                dur_str = time.strftime('%M:%S', time.gmtime(meta['duration'])) if meta.get('duration') else "Unknown"
+
+                try:
+                    bot.delete_message(status_msg.chat.id, status_msg.message_id)
+                except Exception:
+                    pass
+
+                caption = (
+                    f"🎬 *Video ➡️ 320 kbps Studio Audio Extracted!* 🎧\n\n"
+                    f"🎵 *Track:* `{meta.get('title', 'Video Track')}`\n"
+                    f"⏱️ *Duration:* `{dur_str}`\n"
+                    f"🖼️ *Cover:* `Video Frame Captured ✅`\n\n"
+                    f"👇 *Aap is audio ko 8D/16D bana sakte ho, vocals remove kar sakte ho, ya Video Studio open kar sakte ho:*"
+                )
+
+                uploader.send_audio_smart(
+                    bot=bot,
+                    chat_id=chat_id,
+                    file_path=extracted_mp3,
+                    title=meta.get("title", "Video Track"),
+                    performer="AZ Studio (Video Extracted)",
+                    caption=caption,
+                    reply_markup=get_effect_keyboard(session)
+                )
+            except Exception as e:
+                logger.error(f"Video extract error: {e}", exc_info=True)
+                bot.send_message(chat_id, f"❌ Failed to extract audio from video: {e}")
+            finally:
+                USER_BUSY[user_id] = False
+
+        threading.Thread(target=download_and_extract, daemon=True).start()
+
+    @bot.message_handler(content_types=['video', 'video_note'])
+    def handle_video_upload(message):
+        user_id = message.from_user.id
+        db.register_user(user_id, message.from_user.username, message.from_user.first_name)
+        video_obj = message.video or message.video_note
+        if video_obj:
+            process_and_extract_video(user_id, message.chat.id, video_obj, message.message_id)
+
     @bot.message_handler(content_types=['audio', 'document'])
     def handle_audio_upload(message):
         user_id = message.from_user.id
@@ -235,6 +342,11 @@ def register_handlers(bot: TeleBot):
         # If user sent an image as document/file, route it to photo wallpaper handler!
         if mime_type.startswith("image/") or any(file_name.endswith(ext) for ext in ('.jpg', '.jpeg', '.png', '.webp', '.bmp')):
             process_and_save_photo(user_id, message.chat.id, file_obj.file_id, message.message_id)
+            return
+
+        # If user sent a video as document/file, route it to video extractor!
+        if mime_type.startswith("video/") or any(file_name.endswith(ext) for ext in ('.mp4', '.mkv', '.mov', '.webm', '.avi', '.flv', '.m4v')):
+            process_and_extract_video(user_id, message.chat.id, file_obj, message.message_id)
             return
 
         if not file_name:
@@ -408,12 +520,19 @@ def register_handlers(bot: TeleBot):
                 try:
                     USER_BUSY[user_id] = True
                     bot.answer_callback_query(call.id, f"Applying {effect_name.upper()} processing...")
-                    
+
+                    if effect_name == "vocal_ai":
+                        engine_title = "AI Vocal Separation (Meta Demucs)"
+                    elif effect_name == "vocal_dsp":
+                        engine_title = "Fast Karaoke Isolation (DSP)"
+                    else:
+                        engine_title = f"Applying {effect_name.upper()} Spatial DSP"
+
                     initial_card = render_progress_card(
-                        f"Applying {effect_name.upper()} Spatial DSP",
+                        engine_title,
                         10.0,
                         stage="1/1",
-                        detail="Initializing spatial engine..."
+                        detail="Initializing engine..."
                     )
                     status_msg = bot.send_message(
                         call.message.chat.id,
@@ -429,7 +548,7 @@ def register_handlers(bot: TeleBot):
                     def update_audio_progress(pct, detail):
                         try:
                             card = render_progress_card(
-                                f"Applying {effect_name.upper()} Spatial DSP",
+                                engine_title,
                                 pct,
                                 stage="1/1",
                                 detail=detail
@@ -445,8 +564,6 @@ def register_handlers(bot: TeleBot):
                         progress_callback=update_audio_progress
                     )
                     
-                    db.save_session(user_id, processed_audio_path=out_mp3)
-                    session["processed_audio_path"] = out_mp3
                     db.log_conversion(user_id, "audio", effect_name)
 
                     upload_card = render_progress_card(
@@ -459,21 +576,54 @@ def register_handlers(bot: TeleBot):
                         bot.edit_message_text(upload_card, chat_id=status_msg.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
                     except:
                         pass
-                    
-                    kb_after = types.InlineKeyboardMarkup(row_width=1)
-                    kb_after.add(types.InlineKeyboardButton("🎬 Open Video Studio for this Audio", callback_data="menu_video_studio"))
-                    kb_after.add(types.InlineKeyboardButton("🖼️ Add Wallpaper & Render Video", callback_data="prompt_custom_photo"))
-                    kb_after.add(types.InlineKeyboardButton("⬅️ Back to Audio Menu", callback_data="back_main"))
 
-                    uploader.send_audio_smart(
-                        bot=bot,
-                        chat_id=call.message.chat.id,
-                        file_path=out_mp3,
-                        title=f"{song_clean} ({effect_name.upper()})",
-                        performer="AZ 8D Studio",
-                        caption=f"✨ *{effect_name.upper()} Audio Ready!* 🎧\n• Mastered at: 320 kbps (-14 LUFS)\n• Use headphones for 360° spatial effect!",
-                        reply_markup=kb_after
-                    )
+                    if effect_name in ("vocal_ai", "vocal_dsp"):
+                        inst_title = f"{song_clean} (Instrumental)"
+                        # Update session raw audio so subsequent 8D or Video Studio acts on the instrumental!
+                        db.save_session(user_id, processed_audio_path=out_mp3, raw_audio_path=out_mp3, last_song_name=inst_title)
+                        session["processed_audio_path"] = out_mp3
+                        session["raw_audio_path"] = out_mp3
+                        session["last_song_name"] = inst_title
+
+                        kb_after = types.InlineKeyboardMarkup(row_width=1)
+                        kb_after.add(types.InlineKeyboardButton("🎧 Convert Instrumental to 8D Audio", callback_data="eff_8d"))
+                        kb_after.add(types.InlineKeyboardButton("🔥 Convert to 8D + Beat Boost", callback_data="eff_8d_bass"))
+                        kb_after.add(types.InlineKeyboardButton("🎬 Open Video Studio (Visualizer Video)", callback_data="menu_video_studio"))
+                        kb_after.add(types.InlineKeyboardButton("⬅️ Back to Audio Menu", callback_data="back_main"))
+
+                        uploader.send_audio_smart(
+                            bot=bot,
+                            chat_id=call.message.chat.id,
+                            file_path=out_mp3,
+                            title=inst_title,
+                            performer="AZ Vocal Remover",
+                            caption=(
+                                f"🎤❌ *Vocals Removed Successfully!* 🎶\n\n"
+                                f"• Mode: `{'🤖 Meta Demucs AI Neural Network' if effect_name == 'vocal_ai' else '⚡ Fast Karaoke (DSP)'}`\n"
+                                f"• Bitrate: `320 kbps Studio Quality`\n"
+                                f"• Mastering: `-14 LUFS Loudness Normalized`\n\n"
+                                f"👇 *Is instrumental ko 8D me convert karein ya Video Studio open karein:*"
+                            ),
+                            reply_markup=kb_after
+                        )
+                    else:
+                        db.save_session(user_id, processed_audio_path=out_mp3)
+                        session["processed_audio_path"] = out_mp3
+
+                        kb_after = types.InlineKeyboardMarkup(row_width=1)
+                        kb_after.add(types.InlineKeyboardButton("🎬 Open Video Studio for this Audio", callback_data="menu_video_studio"))
+                        kb_after.add(types.InlineKeyboardButton("🖼️ Add Wallpaper & Render Video", callback_data="prompt_custom_photo"))
+                        kb_after.add(types.InlineKeyboardButton("⬅️ Back to Audio Menu", callback_data="back_main"))
+
+                        uploader.send_audio_smart(
+                            bot=bot,
+                            chat_id=call.message.chat.id,
+                            file_path=out_mp3,
+                            title=f"{song_clean} ({effect_name.upper()})",
+                            performer="AZ 8D Studio",
+                            caption=f"✨ *{effect_name.upper()} Audio Ready!* 🎧\n• Mastered at: 320 kbps (-14 LUFS)\n• Use headphones for 360° spatial effect!",
+                            reply_markup=kb_after
+                        )
                     try:
                         bot.delete_message(status_msg.chat.id, status_msg.message_id)
                     except Exception:

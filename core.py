@@ -5,6 +5,7 @@ Core Audio & Video Engine for AZ 8D Audio Bot.
 import os
 import sys
 import time
+import shutil
 import subprocess
 import numpy as np
 import scipy.io.wavfile as wav
@@ -82,6 +83,150 @@ def extract_metadata_and_cover(input_audio: str, out_cover_path: str) -> Dict[st
 
     return meta
 
+def extract_audio_from_video(video_path: str, output_mp3: str, out_cover_path: Optional[str] = None, progress_callback=None) -> Dict[str, Any]:
+    """
+    Extracts high-bitrate 320 kbps MP3 audio stream from any video file
+    and extracts a clean representative frame snapshot as album cover artwork.
+    """
+    if progress_callback:
+        progress_callback(30, "Extracting 320 kbps audio stream from video...")
+
+    cmd_extract = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-vn",
+        "-c:a", "libmp3lame",
+        "-b:a", MP3_BITRATE,
+        "-ar", str(AUDIO_SAMPLE_RATE),
+        output_mp3
+    ]
+    subprocess.run(cmd_extract, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    has_cover = False
+    if out_cover_path:
+        if progress_callback:
+            progress_callback(70, "Extracting video thumbnail for cover art...")
+        cmd_thumb = [
+            "ffmpeg", "-y",
+            "-ss", "00:00:02",
+            "-i", video_path,
+            "-vframes", "1",
+            "-q:v", "2",
+            out_cover_path
+        ]
+        try:
+            res = subprocess.run(cmd_thumb, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if res.returncode == 0 and os.path.exists(out_cover_path) and os.path.getsize(out_cover_path) > 0:
+                has_cover = True
+            else:
+                # Fallback to first frame if video is shorter than 2s
+                cmd_thumb_fallback = [
+                    "ffmpeg", "-y",
+                    "-i", video_path,
+                    "-vframes", "1",
+                    "-q:v", "2",
+                    out_cover_path
+                ]
+                subprocess.run(cmd_thumb_fallback, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if os.path.exists(out_cover_path) and os.path.getsize(out_cover_path) > 0:
+                    has_cover = True
+        except Exception:
+            has_cover = False
+
+    meta = extract_metadata_and_cover(output_mp3, out_cover_path or "")
+    if has_cover:
+        meta["has_cover"] = True
+
+    if progress_callback:
+        progress_callback(100, "Audio extracted successfully!")
+
+    return meta
+
+def remove_vocals_dsp(input_audio: str, output_mp3: str, progress_callback=None) -> str:
+    """
+    Fast center-channel vocal cancellation DSP.
+    Isolates sub-bass (<130Hz) and air (>7.5kHz), while applying mid-side phase cancellation
+    to the vocal presence band (130Hz-7.5kHz). Mastered at -14 LUFS 320kbps.
+    """
+    if progress_callback:
+        progress_callback(30, "Isolating stereo side instruments & cancelling center vocals...")
+
+    filter_complex = (
+        "[0:a]lowpass=f=130[bass]; "
+        "[0:a]highpass=f=7500[air]; "
+        "[0:a]bandpass=f=1800:width_type=h:w=3500,pan=stereo|c0=c0-c1|c1=c1-c0[karaoke]; "
+        "[bass][karaoke]amix=inputs=2:weights=1.2 1.0[mid]; "
+        "[mid][air]amix=inputs=2:weights=1.0 0.8,loudnorm=I=-14:TP=-1.0[out]"
+    )
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_audio,
+        "-filter_complex", filter_complex,
+        "-map", "[out]",
+        "-c:a", "libmp3lame",
+        "-b:a", MP3_BITRATE,
+        output_mp3
+    ]
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if progress_callback:
+        progress_callback(100, "Vocal removal complete!")
+    return output_mp3
+
+def remove_vocals_ai(input_audio: str, output_mp3: str, temp_dir: Optional[str] = None, progress_callback=None) -> str:
+    """
+    Meta Demucs AI Neural Network vocal remover.
+    Separates song into vocals and accompaniment (instrumental/karaoke) with studio quality.
+    """
+    if progress_callback:
+        progress_callback(25, "Running Meta Demucs AI Neural Network stem separation...")
+
+    out_dir = Path(temp_dir or TEMP_DIR) / f"demucs_{int(time.time())}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    cmd_demucs = [
+        sys.executable, "-m", "demucs.separate",
+        "-n", "htdemucs",
+        "--two-stems", "vocals",
+        "-d", "cpu",
+        "-j", "4",
+        "--mp3",
+        "--mp3-bitrate", "320",
+        "-o", str(out_dir),
+        input_audio
+    ]
+    
+    try:
+        subprocess.run(cmd_demucs, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        matches = list(out_dir.rglob("no_vocals.mp3"))
+        if not matches:
+            matches = list(out_dir.rglob("no_vocals.wav"))
+            
+        if not matches:
+            raise RuntimeError("Demucs failed to produce no_vocals stem")
+            
+        no_vocals_file = matches[0]
+        
+        if progress_callback:
+            progress_callback(85, "Mastering AI Instrumental to 320 kbps MP3...")
+
+        cmd_master = [
+            "ffmpeg", "-y",
+            "-i", str(no_vocals_file),
+            "-c:a", "libmp3lame",
+            "-b:a", MP3_BITRATE,
+            "-filter:a", f"loudnorm=I={TARGET_LUFS}:TP={TARGET_TP}",
+            output_mp3
+        ]
+        subprocess.run(cmd_master, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return output_mp3
+    finally:
+        if out_dir.exists():
+            try:
+                shutil.rmtree(out_dir, ignore_errors=True)
+            except Exception:
+                pass
+
 def process_16d_dsp(input_wav: str, output_wav: str):
     sr, data = wav.read(input_wav)
     if data.dtype == np.int16:
@@ -130,6 +275,11 @@ def process_16d_dsp(input_wav: str, output_wav: str):
     wav.write(output_wav, sr, (stereo * 32767).astype(np.int16))
 
 def process_audio_effect(input_audio: str, output_mp3: str, effect: str = "8d", progress_callback=None) -> str:
+    if effect == "vocal_dsp":
+        return remove_vocals_dsp(input_audio, output_mp3, progress_callback=progress_callback)
+    elif effect == "vocal_ai":
+        return remove_vocals_ai(input_audio, output_mp3, progress_callback=progress_callback)
+
     temp_wav_in = str(TEMP_DIR / f"temp_in_{int(time.time()*1000)}.wav")
     temp_wav_proc = str(TEMP_DIR / f"temp_proc_{int(time.time()*1000)}.wav")
     
