@@ -1,10 +1,6 @@
-import database as db
-import os
-import time
+import telebot
+import config
 
-s = db.get_session(8615007714)
-print("SESSION:")
-print(s)
-if s:
-    updated = s.get('updated_at', 0)
-    print("Updated at:", updated, "Seconds ago:", time.time() - updated)
+bot = telebot.TeleBot(config.BOT_TOKEN)
+print("Webhook info:", bot.get_webhook_info())
+print("Bot me:", bot.get_me().username)
