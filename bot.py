@@ -37,6 +37,12 @@ def main():
     
     logger.info("AZ 8D Audio Bot started successfully! Listening for messages...")
     try:
+        try:
+            bot.remove_webhook()
+            logger.info("Removed any existing Telegram webhook.")
+        except Exception as we:
+            logger.warning(f"Could not remove webhook: {we}")
+
         bot.infinity_polling(timeout=20, long_polling_timeout=15)
     except Exception as e:
         logger.critical(f"Bot polling error: {e}", exc_info=True)
