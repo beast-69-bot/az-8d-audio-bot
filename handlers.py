@@ -23,6 +23,21 @@ logger = logging.getLogger("az_8d_bot.handlers")
 
 USER_BUSY = {}
 
+def is_user_busy(user_id: int) -> bool:
+    busy_time = USER_BUSY.get(user_id)
+    if not busy_time:
+        return False
+    if time.time() - busy_time > 180:
+        USER_BUSY.pop(user_id, None)
+        return False
+    return True
+
+def set_user_busy(user_id: int, busy: bool):
+    if busy:
+        USER_BUSY[user_id] = time.time()
+    else:
+        USER_BUSY.pop(user_id, None)
+
 def get_effect_keyboard(session: dict):
     kb = types.InlineKeyboardMarkup(row_width=2)
     b_8d = types.InlineKeyboardButton("🎧 8D Audio", callback_data="eff_8d")
@@ -224,7 +239,7 @@ def register_handlers(bot: TeleBot):
             bot.edit_message_text(f"❌ Failed to save photo: {e}", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
 
     def process_and_extract_video(user_id, chat_id, file_obj, reply_to_msg_id=None):
-        if USER_BUSY.get(user_id):
+        if is_user_busy(user_id):
             bot.send_message(chat_id, "⚠️ You already have an active task in progress. Please wait a few moments!", reply_to_message_id=reply_to_msg_id)
             return
 
@@ -237,7 +252,7 @@ def register_handlers(bot: TeleBot):
 
         def download_and_extract():
             try:
-                USER_BUSY[user_id] = True
+                set_user_busy(user_id, True)
                 user_temp_dir = config.TEMP_DIR / str(user_id)
                 user_temp_dir.mkdir(exist_ok=True, parents=True)
 
@@ -311,7 +326,7 @@ def register_handlers(bot: TeleBot):
                 logger.error(f"Video extract error: {e}", exc_info=True)
                 bot.send_message(chat_id, f"❌ Failed to extract audio from video: {e}")
             finally:
-                USER_BUSY[user_id] = False
+                set_user_busy(user_id, False)
 
         threading.Thread(target=download_and_extract, daemon=True).start()
 
@@ -328,7 +343,7 @@ def register_handlers(bot: TeleBot):
         user_id = message.from_user.id
         db.register_user(user_id, message.from_user.username, message.from_user.first_name)
         
-        if USER_BUSY.get(user_id):
+        if is_user_busy(user_id):
             bot.reply_to(message, "⚠️ You already have an active task in progress. Please wait a few moments!")
             return
 
@@ -361,7 +376,7 @@ def register_handlers(bot: TeleBot):
 
         def download_and_init():
             try:
-                USER_BUSY[user_id] = True
+                set_user_busy(user_id, True)
                 user_temp_dir = config.TEMP_DIR / str(user_id)
                 user_temp_dir.mkdir(exist_ok=True, parents=True)
                 
@@ -416,7 +431,7 @@ def register_handlers(bot: TeleBot):
                 bot.edit_message_text(f"❌ Failed to process audio: {e}", chat_id=status_msg.chat.id,
                                       message_id=status_msg.message_id)
             finally:
-                USER_BUSY[user_id] = False
+                set_user_busy(user_id, False)
 
         threading.Thread(target=download_and_init, daemon=True).start()
 
@@ -429,10 +444,16 @@ def register_handlers(bot: TeleBot):
     @bot.callback_query_handler(func=lambda call: True)
     def handle_callbacks(call):
         user_id = call.from_user.id
+        # Immediately acknowledge callback query so Telegram UI removes the button loading spinner instantly!
+        try:
+            bot.answer_callback_query(call.id)
+        except Exception:
+            pass
+
         session = db.get_session(user_id)
         
         if not session or not session.get("raw_audio_path"):
-            bot.answer_callback_query(call.id, "Session expired or no song found. Please send the song again!", show_alert=True)
+            bot.send_message(call.message.chat.id, "⚠️ Session expired or no song found. Please send the song again!")
             return
 
         data = call.data
@@ -512,14 +533,13 @@ def register_handlers(bot: TeleBot):
         # Audio Effects Processing
         if data.startswith("eff_"):
             effect_name = data.replace("eff_", "")
-            if USER_BUSY.get(user_id):
-                bot.answer_callback_query(call.id, "A task is already processing!", show_alert=True)
+            if is_user_busy(user_id):
+                bot.send_message(call.message.chat.id, "⚠️ A task is already processing! Please wait a moment.")
                 return
 
             def run_audio_process():
                 try:
-                    USER_BUSY[user_id] = True
-                    bot.answer_callback_query(call.id, f"Applying {effect_name.upper()} processing...")
+                    set_user_busy(user_id, True)
 
                     if effect_name == "vocal_ai":
                         engine_title = "AI Vocal Separation (Meta Demucs)"
@@ -632,20 +652,20 @@ def register_handlers(bot: TeleBot):
                     logger.error(f"Audio process error: {e}", exc_info=True)
                     bot.send_message(call.message.chat.id, f"❌ Failed to process audio: {e}")
                 finally:
-                    USER_BUSY[user_id] = False
+                    set_user_busy(user_id, False)
 
             threading.Thread(target=run_audio_process, daemon=True).start()
             return
 
         # Video Rendering Workflows (As-Is, 8D Spatial, 8D Bass Boosted)
         if data in ("make_video", "render_vid_asis", "render_vid_8d", "render_vid_8d_bass"):
-            if USER_BUSY.get(user_id):
-                bot.answer_callback_query(call.id, "A task is already processing!", show_alert=True)
+            if is_user_busy(user_id):
+                bot.send_message(call.message.chat.id, "⚠️ A task is already processing! Please wait a moment.")
                 return
 
             def run_video_process():
                 try:
-                    USER_BUSY[user_id] = True
+                    set_user_busy(user_id, True)
                     bot.answer_callback_query(call.id, "Rendering Video...")
                     
                     user_out_dir = config.OUTPUT_DIR / str(user_id)
@@ -776,7 +796,7 @@ def register_handlers(bot: TeleBot):
                     logger.error(f"Video process error: {e}", exc_info=True)
                     bot.send_message(call.message.chat.id, f"❌ Video rendering failed: {e}")
                 finally:
-                    USER_BUSY[user_id] = False
+                    set_user_busy(user_id, False)
 
             threading.Thread(target=run_video_process, daemon=True).start()
             return

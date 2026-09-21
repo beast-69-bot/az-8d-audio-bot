@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import shutil
+import threading
 import subprocess
 import numpy as np
 import scipy.io.wavfile as wav
@@ -178,7 +179,7 @@ def remove_vocals_ai(input_audio: str, output_mp3: str, temp_dir: Optional[str] 
     Separates song into vocals and accompaniment (instrumental/karaoke) with studio quality.
     """
     if progress_callback:
-        progress_callback(25, "Running Meta Demucs AI Neural Network stem separation...")
+        progress_callback(20, "Starting Meta Demucs AI Neural Network...")
 
     out_dir = Path(temp_dir or TEMP_DIR) / f"demucs_{int(time.time())}"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -195,8 +196,26 @@ def remove_vocals_ai(input_audio: str, output_mp3: str, temp_dir: Optional[str] 
         input_audio
     ]
     
+    stop_ticker = threading.Event()
+    def progress_ticker():
+        stages = [
+            (35, "Neural layers analyzing vocal harmonics..."),
+            (50, "Separating lead and backing vocals..."),
+            (65, "Isolating stereo instrumental accompaniment..."),
+            (78, "Extracting clean instrumental track..."),
+        ]
+        for pct, desc in stages:
+            if stop_ticker.wait(7):
+                break
+            if progress_callback:
+                progress_callback(pct, desc)
+
+    ticker_thread = threading.Thread(target=progress_ticker, daemon=True)
+    ticker_thread.start()
+
     try:
         subprocess.run(cmd_demucs, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        stop_ticker.set()
         
         matches = list(out_dir.rglob("no_vocals.mp3"))
         if not matches:
@@ -208,7 +227,7 @@ def remove_vocals_ai(input_audio: str, output_mp3: str, temp_dir: Optional[str] 
         no_vocals_file = matches[0]
         
         if progress_callback:
-            progress_callback(85, "Mastering AI Instrumental to 320 kbps MP3...")
+            progress_callback(88, "Mastering AI Instrumental to 320 kbps MP3...")
 
         cmd_master = [
             "ffmpeg", "-y",
@@ -219,8 +238,11 @@ def remove_vocals_ai(input_audio: str, output_mp3: str, temp_dir: Optional[str] 
             output_mp3
         ]
         subprocess.run(cmd_master, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if progress_callback:
+            progress_callback(100, "AI Vocal removal complete!")
         return output_mp3
     finally:
+        stop_ticker.set()
         if out_dir.exists():
             try:
                 shutil.rmtree(out_dir, ignore_errors=True)
